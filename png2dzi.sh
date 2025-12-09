@@ -8,6 +8,15 @@ fi
 
 PNG="$1"
 BASE="${PNG%.*}"
+TARGET_DZI="s3://polynomiography/${BASE}.dzi"
+
+# s5cmd ls returns 0 if it finds the object, non-zero otherwise.
+if s5cmd ls "$TARGET_DZI" >/dev/null 2>&1; then
+    echo "DeepZoom already exists on S3. Skipping: $TARGET_DZI"
+    exit 0
+fi
+
+echo "No existing .dzi found. Proceeding."
 
 echo "Fetching $PNG from polyvec/lyapunov."
 s5cmd cp "s3://polyvec/lyapunov/$BASE.png" .
