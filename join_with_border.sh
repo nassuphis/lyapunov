@@ -2,7 +2,7 @@
 # join_with_border.sh
 #
 # Usage:
-#   ./join_with_border.sh "test/tst18_*.jpg" nn14loc49.jpg 800
+#   ./join_with_border.sh "test/tst18_*.jpg" nn14loc49.jpg 800 16
 
 set -euo pipefail
 
