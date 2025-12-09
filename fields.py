@@ -502,7 +502,7 @@ def entropy_field_2d(
     return out
 
 # ---------------------------------------------------------------------------
-# stat field 
+# histogram field 
 # ---------------------------------------------------------------------------
 
 @njit
@@ -1004,5 +1004,145 @@ def hist_field_2d(
             out[j, i] = -e
 
     return out
+
+
+# ---------------------------------------------------------------------------
+# dict-based interfaces to numba functions
+# ---------------------------------------------------------------------------
+
+def do_lyapunov_field_1d(map_cfg,pix):
+    field = lyapunov_field_1d(
+        map_cfg["step"],
+        map_cfg["deriv"],
+        map_cfg["seq_arr"],
+        map_cfg["domain_affine"],
+        int(pix),
+        float(map_cfg["x0"]),
+        int(map_cfg["n_tr"]),
+        int(map_cfg["n_it"]),
+        float(map_cfg["eps"]),            
+    )
+    return field
+
+def do_lyapunov_field_2d_ab(map_cfg,pix):
+    field = lyapunov_field_2d_ab(
+        map_cfg["step2_ab"],
+        map_cfg["jac2_ab"],
+        map_cfg["seq_arr"],
+        map_cfg["domain_affine"],
+        int(pix),
+        float(map_cfg["x0"]), 
+        float(map_cfg["y0"]),
+        int(map_cfg["n_tr"]), 
+        int(map_cfg["n_it"]),
+        float(map_cfg.get("eps_floor", 1e-16)),
+    )
+    return field
+
+def do_lyapunov_field_2d(map_cfg,pix):
+    field = lyapunov_field_2d(
+        map_cfg["step2"],
+        map_cfg["jac2"],
+        map_cfg["domain_affine"],
+        int(pix),
+        float(map_cfg["x0"]), 
+        float(map_cfg["y0"]),
+        int(map_cfg["n_tr"]), 
+        int(map_cfg["n_it"]),
+        float(map_cfg.get("eps_floor", 1e-16)),
+    )
+    return field
+
+def do_entropy_field_1d(map_cfg,pix):
+    raw = entropy_field_1d(
+        map_cfg["step"],
+        map_cfg["seq_arr"],
+        map_cfg["domain_affine"],
+        int(pix),
+        float(map_cfg["x0"]),
+        int(map_cfg["n_tr"]),
+        int(map_cfg["n_it"]),
+        map_cfg["omegas"],
+    )
+    field = map_cfg["entropy_sign"] * (2.0 * raw - 1.0)
+    return field
+
+def do_entropy_field_2d_ab(map_cfg,pix):
+    raw = entropy_field_2d_ab(
+        map_cfg["step2_ab"],
+        map_cfg["seq_arr"],
+        map_cfg["domain_affine"],
+        int(pix),
+        float(map_cfg["x0"]), 
+        float(map_cfg["y0"]),
+        int(map_cfg["n_tr"]), 
+        int(map_cfg["n_it"]),
+        map_cfg["omegas"],
+    )
+    field = map_cfg["entropy_sign"] * (2.0 * raw - 1.0)
+    return field
+
+def do_entropy_field_2d(map_cfg,pix):
+    raw = entropy_field_2d(
+        map_cfg["step2"],
+        map_cfg["domain_affine"],
+        int(pix),
+        float(map_cfg["x0"]), 
+        float(map_cfg["y0"]),
+        int(map_cfg["n_tr"]), 
+        int(map_cfg["n_it"]),
+        map_cfg["omegas"],
+    )
+    field = map_cfg["entropy_sign"] * (2.0 * raw - 1.0)
+    return field
+
+def do_hist_field_1d(map_cfg,pix):
+    raw = hist_field_1d(
+        map_cfg["step"],
+        map_cfg["seq_arr"],
+        map_cfg["domain_affine"],
+        int(pix),
+        float(map_cfg["x0"]),
+        int(map_cfg["n_tr"]),
+        int(map_cfg["n_it"]),
+        int(map_cfg["vcalc"]),
+        int(map_cfg["hcalc"]),
+        int(map_cfg["hbins"]),
+    )
+    field = raw-np.median(raw)
+    return field
+
+def do_hist_field_2d_ab(map_cfg,pix):
+    raw = hist_field_2d_ab(
+        map_cfg["step2_ab"],
+        map_cfg["seq_arr"],
+        map_cfg["domain_affine"],
+        int(pix),
+        float(map_cfg["x0"]),
+        float(map_cfg["y0"]),
+        int(map_cfg["n_tr"]),
+        int(map_cfg["n_it"]),
+        int(map_cfg["vcalc"]),
+        int(map_cfg["hcalc"]),
+    )
+    field = raw-np.median(raw)
+    return field
+
+def do_hist_field_2d(map_cfg,pix):
+    raw = hist_field_2d(
+        map_cfg["step2"],
+        map_cfg["domain_affine"],
+        int(pix),
+        float(map_cfg["x0"]),
+        float(map_cfg["y0"]),
+        int(map_cfg["n_tr"]),
+        int(map_cfg["n_it"]),
+        int(map_cfg["vcalc"]),
+        int(map_cfg["hcalc"]),
+    )
+    field = raw-np.median(raw)
+    return field
+
+
 
 

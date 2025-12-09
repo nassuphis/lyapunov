@@ -6,14 +6,15 @@
 
 set -euo pipefail
 
-if [ "$#" -ne 3 ]; then
-    echo "Usage: $0 \"pattern\" target.jpg shim_px" >&2
+if [ "$#" -ne 4 ]; then
+    echo "Usage: $0 \"pattern\" target.jpg shim_px across" >&2
     exit 1
 fi
 
 pattern="$1"   # e.g. "test/tst18_*.jpg"
 target="$2"    # e.g. nn14loc49.jpg
 shim="$3"      # e.g. 800
+across="$4"    # e.g 4
 
 # Derive a _raw name from target, keeping extension
 ext="${target##*.}"
@@ -27,7 +28,7 @@ echo "Inner shim: ${shim}px, outer border: ${shim}px"
 
 # 1) Join images with inner shim
 #    IMPORTANT: pass the *single* argument "$(ls ...)" like you do manually
-vips arrayjoin "$(ls $pattern)" "$raw" --across 4 --shim "$shim"
+vips arrayjoin "$(ls $pattern)" "$raw" --across "$across" --shim "$shim"
 
 # 2) Get width/height of raw image
 W=$(vipsheader -f width "$raw")
