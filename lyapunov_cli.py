@@ -2474,22 +2474,26 @@ def main() -> None:
         raise SystemExit("Spec expansion produced no tiles")
 
     for i, spec in enumerate(specs, start=1):
-        print(f"{i}/{len(specs)} Rendering {spec}")
-        t0 = time.perf_counter()
-        rgb = spec2lyapunov(spec, pix=args.pix)
-        print(f"field time: {time.perf_counter() - t0:.3f}s")
-        # swap A/B axes and flip vertically to match Markus & Hess style
-        rgb = np.flipud(rgb)
         fn = raster.add_suffix_number(outfile,i)
-        raster.save_jpg_rgb(
-            rgb,
-            out_path=fn,
-            invert=False,
-            footer_text=spec,
-            footer_pad_lr_px=48,
-            footer_dpi=300,
-        )
-        print(f"saved: {fn}")
+        if not Path(fn).exists():
+            print(f"{i}/{len(specs)} Rendering {spec}")
+            t0 = time.perf_counter()
+            rgb = spec2lyapunov(spec, pix=args.pix)
+            print(f"field time: {time.perf_counter() - t0:.3f}s")
+            # swap A/B axes and flip vertically to match Markus & Hess style
+            rgb = np.flipud(rgb)
+            
+            raster.save_jpg_rgb(
+                rgb,
+                out_path=fn,
+                invert=False,
+                footer_text=spec,
+                footer_pad_lr_px=48,
+                footer_dpi=300,
+            )
+            print(f"saved: {fn}")
+        else:
+            print(f"{fn} exists, skipping")
 
     Path(Path(outfile).name).with_suffix(".spec").write_text("\n".join(specs))
 
