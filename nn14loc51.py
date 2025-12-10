@@ -83,7 +83,7 @@ def main():
                 and nearly_equal(a3, t3)
                 and a4 == t4
             ):
-                print(f"nn14loc51_{lineno:05d}.png : {line}")
+                print(f"s3://polyvec/nn14loc51/nn14loc51_{lineno:05d}.png")
                 # if you want *all* matches, remove this break
                 break
 
