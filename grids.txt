@@ -1,0 +1,1 @@
+python lyapunov_cli.py --spec 'map:nn14:AB:-20:-20:20:20,m:cwavg(meixpol({1:4},{-0.5:0.5:4},0.5,[i,sin,cos,sinc,sinhc,sech,si,ci,ei,lint,li2,gd,dawson,lgamma,j0,j1,i0,i1,aira,airb,fres,frec,le3,le4,he3,he4,la3,la4,sbs3,sbs4,cht3,cht4,chu3,chu4]([l,r,x])),cos(l),x,1/2),rgb:palette:rg,hist:6:6:512' --pix 5000 --out test/nn14loc49.png
