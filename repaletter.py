@@ -108,6 +108,7 @@ def repalette_array(
     rgb_in: np.ndarray,
     palette_in: str,
     palette_out: str,
+    keep_colors: list[np.ndarray] = None,
 ) -> np.ndarray:
     """
     Core repaletting logic.
@@ -173,6 +174,10 @@ def repalette_array(
         )
 
     rgb_out = np.clip(np.rint(rgb_out), 0, 255).astype(np.uint8)
+    if keep_colors:
+        for kc in keep_colors:
+            mask = np.all(rgb_in == kc.reshape(1,1,3), axis=2)
+            rgb_out[mask] = kc  # restore exact original
     return rgb_out
 
 
@@ -230,6 +235,14 @@ def main(argv=None) -> None:
         help="Explicit output filename (overrides suffix logic)",
     )
 
+    parser.add_argument(
+        "--keep",
+        action="append",
+        default=[],
+        help="Hex RGB colors to leave unmodified (e.g. --keep FFFFFF). "
+            "Can be used multiple times."
+    )
+
     args = parser.parse_args(argv)
 
     in_path = Path(args.input)
@@ -242,6 +255,21 @@ def main(argv=None) -> None:
     else:
         suffix = args.suffix if args.suffix is not None else f"_{args.pout}"
         out_path = in_path.with_name(in_path.stem + suffix + in_path.suffix)
+
+    # Convert keep hex strings -> list of RGB uint8 triplets
+    keep_colors = []
+    for spec in args.keep:
+        # accept with or without #
+        s = spec.strip().lstrip("#")
+        if len(s) != 6:
+            raise SystemExit(f"--keep expects hex like FFFFFF, got {spec}")
+        try:
+            r = int(s[0:2], 16)
+            g = int(s[2:4], 16)
+            b = int(s[4:6], 16)
+        except ValueError:
+            raise SystemExit(f"--keep: invalid hex {spec}")
+        keep_colors.append(np.array([r, g, b], dtype=np.uint8))
 
     # Load via pyvips
     img = vips.Image.new_from_file(str(in_path), access="sequential")
@@ -262,7 +290,7 @@ def main(argv=None) -> None:
     else:
         raise SystemExit(f"Unsupported number of bands: {B} (expected 3 or 4)")
 
-    rgb_out = repalette_array(rgb_in, args.pin, args.pout)
+    rgb_out = repalette_array(rgb_in, args.pin, args.pout, keep_colors=keep_colors)
 
     if has_alpha:
         arr_out = np.dstack([rgb_out, alpha])
