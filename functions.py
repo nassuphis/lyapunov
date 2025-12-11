@@ -119,6 +119,21 @@ def to01(x):
     xmod1 = x % 1
     return abs(math.cos(2*np.pi*xmod1))
 
+@njit(types.float64(types.float64), cache=True, fastmath=False)
+def tri01(x):
+    # x mod 1 in [0,1)
+    u = x - math.floor(x)
+    if u <= 0.5:
+        return 2.0 * u        # 0 → 0, 0.5 → 1
+    else:
+        return 2.0 * (1.0 - u) # 0.5 → 1, 1.0 → 0
+
+@njit(types.float64(types.float64, types.float64), cache=True, fastmath=False)
+def tri01p(p, x):
+    t = tri01(x)
+    if t<=0: return 0.0
+    return t ** p
+
 @njit(types.float64(types.float64,types.float64,types.float64,types.float64), cache=True, fastmath=False)
 def wavg(x1,x2,v,frac):
     p=frac*to01(v)
@@ -127,6 +142,16 @@ def wavg(x1,x2,v,frac):
 @njit(types.complex128(types.complex128,types.complex128,types.float64,types.float64), cache=True, fastmath=False)
 def cwavg(x1,x2,v,frac):
     p=frac*to01(v)
+    return x1*p+x2*(1-p)
+
+@njit(types.complex128(types.complex128,types.complex128,types.float64,types.float64), cache=True, fastmath=False)
+def cwavgt(x1,x2,v,frac):
+    p=frac*tri01(v)
+    return x1*p+x2*(1-p)
+
+@njit(types.complex128(types.complex128,types.complex128,types.float64,types.float64), cache=True, fastmath=False)
+def cwavgtp(x1,x2,v,pow,frac):
+    p=frac*tri01p(v,pow)
     return x1*p+x2*(1-p)
 
 @njit(types.int64(types.float64,types.int64,types.int64), cache=True, fastmath=False)
@@ -1403,6 +1428,8 @@ NS = {
     "to01": to01,
     "wavg": wavg,
     "cwavg": cwavg,
+    "cwavgt": cwavgt, # complex, weighted average, tri
+    "cwavgtp": cwavgtp, # complex, weighted average, power tri
     "f2i": f2i,
     "abs_cap": abs_cap,
     "norm": norm,

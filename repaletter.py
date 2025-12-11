@@ -26,6 +26,7 @@ from rasterizer import colors  # noqa: E402
 import argparse
 import numpy as np
 import pyvips as vips
+import colorsys
 
 
 # ---------------------------------------------------------------------
@@ -103,12 +104,73 @@ def _compute_t_and_error(
 
     return t, err2
 
+def _rgb255_to_hsv01(rgb: np.ndarray) -> np.ndarray:
+    """
+    Convert a single RGB triplet in 0-255 to HSV in 0-1.
+    rgb: shape (3,)
+    """
+    r, g, b = rgb / 255.0
+    h, s, v = colorsys.rgb_to_hsv(float(r), float(g), float(b))
+    return np.array([h, s, v], dtype=np.float64)
+
+
+def _hsv01_to_rgb255_batch(h: np.ndarray, s: np.ndarray, v: np.ndarray) -> np.ndarray:
+    """
+    Vectorized HSV(0-1) -> RGB(0-255) for arrays of shape (...,).
+    Returns array of shape (..., 3) in float64.
+    """
+    c = v * s
+    hp = h * 6.0
+    x = c * (1.0 - np.abs((hp % 2.0) - 1.0))
+    m = v - c
+
+    r_ = np.zeros_like(h)
+    g_ = np.zeros_like(h)
+    b_ = np.zeros_like(h)
+
+    cond0 = (0.0 <= hp) & (hp < 1.0)
+    cond1 = (1.0 <= hp) & (hp < 2.0)
+    cond2 = (2.0 <= hp) & (hp < 3.0)
+    cond3 = (3.0 <= hp) & (hp < 4.0)
+    cond4 = (4.0 <= hp) & (hp < 5.0)
+    cond5 = (5.0 <= hp) & (hp < 6.0)
+
+    r_[cond0], g_[cond0], b_[cond0] = c[cond0], x[cond0], 0.0
+    r_[cond1], g_[cond1], b_[cond1] = x[cond1], c[cond1], 0.0
+    r_[cond2], g_[cond2], b_[cond2] = 0.0, c[cond2], x[cond2]
+    r_[cond3], g_[cond3], b_[cond3] = 0.0, x[cond3], c[cond3]
+    r_[cond4], g_[cond4], b_[cond4] = x[cond4], 0.0, c[cond4]
+    r_[cond5], g_[cond5], b_[cond5] = c[cond5], 0.0, x[cond5]
+
+    r = (r_ + m) * 255.0
+    g = (g_ + m) * 255.0
+    b = (b_ + m) * 255.0
+
+    return np.stack([r, g, b], axis=-1)
+
+
+def _interp_hue_short_arc(h0: float, h1: float, t: np.ndarray) -> np.ndarray:
+    """
+    Interpolate hue in [0,1] along the shortest arc on the circle.
+    h0, h1: scalars in [0,1]
+    t: array of weights in [0,1]
+    """
+    dh = h1 - h0
+    # wrap to [-0.5, 0.5]
+    if dh > 0.5:
+        dh -= 1.0
+    elif dh < -0.5:
+        dh += 1.0
+    h = (h0 + dh * t) % 1.0
+    return h
+
 
 def repalette_array(
     rgb_in: np.ndarray,
     palette_in: str,
     palette_out: str,
     keep_colors: list[np.ndarray] = None,
+    use_hsv: bool = False,
 ) -> np.ndarray:
     """
     Core repaletting logic.
@@ -157,21 +219,53 @@ def repalette_array(
     # Zero pixels → map to new zero color
     rgb_out[is_zero_pixel] = zero_out.reshape(1, 1, 3)
 
-    # Negative branch pixels (non-zero)
-    neg_pixels = (~is_zero_pixel) & (~use_pos)
-    if np.any(neg_pixels):
-        rgb_out[neg_pixels] = (
-            zero_out.reshape(1, 1, 3)
-            + t[neg_pixels][..., None] * (neg_out - zero_out).reshape(1, 1, 3)
-        )
+    if not use_hsv:
+        # ---------- existing RGB interpolation ----------
+        # Negative branch pixels (non-zero)
+        neg_pixels = (~is_zero_pixel) & (~use_pos)
+        if np.any(neg_pixels):
+            rgb_out[neg_pixels] = (
+                zero_out.reshape(1, 1, 3)
+                + t[neg_pixels][..., None] * (neg_out - zero_out).reshape(1, 1, 3)
+            )
 
-    # Positive branch pixels (non-zero)
-    pos_pixels = (~is_zero_pixel) & use_pos
-    if np.any(pos_pixels):
-        rgb_out[pos_pixels] = (
-            zero_out.reshape(1, 1, 3)
-            + t[pos_pixels][..., None] * (pos_out - zero_out).reshape(1, 1, 3)
-        )
+        # Positive branch pixels (non-zero)
+        pos_pixels = (~is_zero_pixel) & use_pos
+        if np.any(pos_pixels):
+            rgb_out[pos_pixels] = (
+                zero_out.reshape(1, 1, 3)
+                + t[pos_pixels][..., None] * (pos_out - zero_out).reshape(1, 1, 3)
+            )
+    else:
+        # ---------- HSV interpolation ----------
+        # Convert palette stops to HSV (0-1)
+        zero_hsv = _rgb255_to_hsv01(zero_out)
+        neg_hsv = _rgb255_to_hsv01(neg_out)
+        pos_hsv = _rgb255_to_hsv01(pos_out)
+
+        # Negative branch pixels (non-zero)
+        neg_pixels = (~is_zero_pixel) & (~use_pos)
+        if np.any(neg_pixels):
+            t_neg = t[neg_pixels]
+
+            h = _interp_hue_short_arc(zero_hsv[0], neg_hsv[0], t_neg)
+            s = zero_hsv[1] + t_neg * (neg_hsv[1] - zero_hsv[1])
+            v = zero_hsv[2] + t_neg * (neg_hsv[2] - zero_hsv[2])
+
+            rgb_neg = _hsv01_to_rgb255_batch(h, s, v)
+            rgb_out[neg_pixels] = rgb_neg
+
+        # Positive branch pixels (non-zero)
+        pos_pixels = (~is_zero_pixel) & use_pos
+        if np.any(pos_pixels):
+            t_pos = t[pos_pixels]
+
+            h = _interp_hue_short_arc(zero_hsv[0], pos_hsv[0], t_pos)
+            s = zero_hsv[1] + t_pos * (pos_hsv[1] - zero_hsv[1])
+            v = zero_hsv[2] + t_pos * (pos_hsv[2] - zero_hsv[2])
+
+            rgb_pos = _hsv01_to_rgb255_batch(h, s, v)
+            rgb_out[pos_pixels] = rgb_pos
 
     rgb_out = np.clip(np.rint(rgb_out), 0, 255).astype(np.uint8)
     if keep_colors:
@@ -243,6 +337,12 @@ def main(argv=None) -> None:
             "Can be used multiple times."
     )
 
+    parser.add_argument(
+        "--hsv",
+        action="store_true",
+        help="Interpolate output palette in HSV instead of RGB.",
+    )
+
     args = parser.parse_args(argv)
 
     in_path = Path(args.input)
@@ -254,6 +354,8 @@ def main(argv=None) -> None:
         out_path = Path(args.output)
     else:
         suffix = args.suffix if args.suffix is not None else f"_{args.pout}"
+        # auto-append _hsv only when hsv is active AND user didn't give custom suffix
+        if args.hsv and args.suffix is None: suffix += "_hsv"
         out_path = in_path.with_name(in_path.stem + suffix + in_path.suffix)
 
     # Convert keep hex strings -> list of RGB uint8 triplets
@@ -290,7 +392,13 @@ def main(argv=None) -> None:
     else:
         raise SystemExit(f"Unsupported number of bands: {B} (expected 3 or 4)")
 
-    rgb_out = repalette_array(rgb_in, args.pin, args.pout, keep_colors=keep_colors)
+    rgb_out = repalette_array(
+        rgb_in, 
+        args.pin, 
+        args.pout, 
+        keep_colors=keep_colors,
+        use_hsv=args.hsv,
+    )
 
     if has_alpha:
         arr_out = np.dstack([rgb_out, alpha])
