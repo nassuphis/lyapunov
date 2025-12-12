@@ -1,6 +1,7 @@
 # images
 *.png
 *.jpg
+*.mp4
 
 # Rnw stuff
 *.tex

@@ -1,7 +1,9 @@
 import math
 import cmath
 import numpy as np
-from numba import njit, types, prange
+from numba import njit, types
+
+import wavelet
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -149,7 +151,7 @@ def cwavgt(x1,x2,v,frac):
     p=frac*tri01(v)
     return x1*p+x2*(1-p)
 
-@njit(types.complex128(types.complex128,types.complex128,types.float64,types.float64), cache=True, fastmath=False)
+@njit(types.complex128(types.complex128,types.complex128,types.float64,types.float64,types.float64), cache=True, fastmath=False)
 def cwavgtp(x1,x2,v,pow,frac):
     p=frac*tri01p(v,pow)
     return x1*p+x2*(1-p)
@@ -1490,6 +1492,11 @@ NS = {
     "sech": sech,
     "sinc": sinc,
     "sinhc": sinhc,
+    "mexhat": wavelet.mexican_hat,
+    "morlet": wavelet.morlet,
+    "shannon": wavelet.shannon,
+    "gdev": wavelet.gauss_deriv,
+    "gdevs": wavelet.gauss_deriv_scaled,
     "np": np,
     "math": math,
     "cmath": cmath,

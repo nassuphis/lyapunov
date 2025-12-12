@@ -44,8 +44,30 @@ RGB_SCHEMES: dict[str, dict] = {
         ),
     ),
 
+    # NEW: HSV-interpolated equalized MH
+    "hsveq": dict(
+        func=colors.hsv_scheme_mh_eq,
+        defaults=dict(
+            gamma=1,
+            pos_color="FF0000",
+            zero_color="000000",
+            neg_color="FFFF00",
+            nbins=2048,
+        ),
+    ),
+
     "palette": dict(
         func=colors.rgb_scheme_palette_eq,
+        defaults=dict(
+            palette="bauhaus_primaries",
+            gamma=1,
+            nbins=2048,
+        ),
+    ),
+
+     # NEW: HSV-interpolated tri-palette scheme
+    "palhsv": dict(
+        func=colors.hsv_scheme_palette_eq,
         defaults=dict(
             palette="bauhaus_primaries",
             gamma=1,
