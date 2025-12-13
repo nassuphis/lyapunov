@@ -298,6 +298,11 @@ def main() -> None:
         help="Show expanded specs before rendering.",
     )
     p.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite move.",
+    )
+    p.add_argument(
         "--pix",
         type=int,
         default=1000,
@@ -386,7 +391,7 @@ def main() -> None:
     for i, spec in enumerate(specs, start=1):
         fn = raster.add_suffix_number(outfile,i)
         fns.append(fn)
-        if not Path(fn).exists():
+        if not Path(fn).exists() or args.overwrite:
             print(f"{i}/{len(specs)} Rendering {spec}")
             t0 = time.perf_counter()
             rgb = spec2lyapunov(spec, pix=args.pix)
