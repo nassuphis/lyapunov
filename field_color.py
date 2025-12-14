@@ -341,6 +341,88 @@ RGB_SCHEMES: dict[str, dict] = {
         args=["paletteA", "paletteB", "w_strength", "sigma_pre", "sigma_tensor", "gamma", "nbins"],
     ),
 
+    "pfgb": dict(
+        func=colors.rgb_scheme_palette_field,
+        defaults=dict(
+            paletteA="rg",
+            paletteB="ink_prussian_mint",
+            norm="eq",
+            gamma=1,
+            nbins=2048,
+
+            w_feature="gabor_max",
+            w_lo=10.0,
+            w_hi=99.0,
+            w_sigma=1.0,
+            w_gamma=1.0,
+            w_strength=1.0,
+
+            # gabor params
+            sigma=3.0,
+            freq=0.12,
+            ntheta=8,
+            theta0=0,
+            theta1=np.pi,
+            gabor_gamma=1.0,
+            pre_sigma=0.5,
+        ),
+        args=["paletteA", "paletteB", "w_strength", "sigma", "freq", "ntheta", "gabor_gamma", "nbins"],
+    ),
+
+    "pfgbt": dict(
+        func=colors.rgb_scheme_palette_field,
+        defaults=dict(
+            paletteA="rg",
+            paletteB="ink_prussian_mint",
+            norm="eq",
+            gamma=1,
+            nbins=2048,
+
+            w_feature="gabor_theta",
+            w_lo=10.0,
+            w_hi=99.0,
+            w_sigma=1.0,
+            w_gamma=1.0,
+            w_strength=1.0,
+
+            # gabor params
+            sigma=3.0,
+            freq=0.12,
+            theta=0.0,
+            gabor_gamma=1.0,
+            pre_sigma=0.5,
+        ),
+        args=["paletteA", "paletteB", "w_strength", "theta", "sigma", "freq", "gabor_gamma", "nbins"],
+    ),
+
+    "pfm": dict(
+        func=colors.rgb_scheme_palette_field,
+        defaults=dict(
+            paletteA="rg",
+            paletteB="ink_prussian_mint",
+            norm="eq",
+            gamma=1,
+            nbins=2048,
+
+            w_feature="ms_ratio",
+            w_lo=0.0,
+            w_hi=100.0,
+            w_sigma=1.0,
+            w_gamma=1.0,
+            w_strength=1.0,
+
+            # multiscale params (coarse mood)
+            s1=1.0,
+            s2=3.0,
+            s3=9.0,
+            se=1.0,
+            pre_sigma=0.5,
+            power=1.0,
+        ),
+        args=["paletteA", "paletteB", "w_strength", "s1", "s2", "s3", "se", "gamma", "nbins"],
+    ),
+
+
 }
 
 # aliases
