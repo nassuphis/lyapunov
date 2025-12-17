@@ -1251,7 +1251,7 @@ def la3(x):
 def la4(x):
     return laguerre(4,x)
 
-@njit(types.float64(types.int64, types.float64, types.float64, types.float64), fastmath=True, cache=True)
+@njit(types.complex128(types.int64, types.float64, types.float64, types.complex128), fastmath=True, cache=True)
 def jacobi(n, alpha, beta, x):
     """
     Jacobi polynomial P_n^{(alpha, beta)}(x), n >= 0, real alpha,beta,x.

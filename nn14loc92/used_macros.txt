@@ -1,0 +1,14 @@
+# 2025-12-17 09:57:35 +0200
+@RUN=slot:{1:10},@LYAP1
+@LYAP1=@MAP14,@M1,@RGB,@HIST
+@MAP14=map:nn14:AB:-20:-20:20:20
+@M1=m:@AVG(@MPOLY(@ORD,@MPAR,@MPAR,@MFUN),cos(l),x,1/2)
+@MPOLY=#{choose("meixpol","jacobi")}
+@MFUN=#{choose("i","cos","j0","exp")}(#{rline("fun.txt")})*exp(#{rline("fun.txt")}+1j*#{rline("fun.txt")})
+@MPAR=#{rfloat3(0.1,2.1)}
+@AVG=#{choose("cwavg","cwavgt")}
+@ORD=#{choose("1","2","3","4","5","6","7")}
+@RGB=rgb:pfm:@PAL:1.2:@S
+@S=s1=#{rfloat3(0.1,1.0)}:s2=#{rfloat3(0.1,1.0)}:s3=#{rfloat3(0.1,1.0)}:se=1.0
+@PAL=#{r2line("tri_warm.txt","tri_cool.txt")}
+@HIST=hist:6:6:512

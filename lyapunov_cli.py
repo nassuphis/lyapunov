@@ -30,22 +30,19 @@ from pathlib import Path
 parent = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(parent))
 
-from pathlib import Path
 import time
 import math
 import argparse
-import re as regex
 import numpy as np
+import subprocess
 
-from specparser import specparser, expandspec
+from specparser import specparser, expander
 from rasterizer import raster
-from rasterizer import colors
 
 import maps
 import fields
 import affine
 import field_color
-
 
 # ---------------------------------------------------------------------------
 # Spec helpers using specparser.split_chain
@@ -232,45 +229,21 @@ def spec2lyapunov(spec: str, pix: int = 5000) -> np.ndarray:
 
     return rgb
 
+
 # ---------------------------------------------------------------------------
-# expansion helpers
+# CLI helpers
 # ---------------------------------------------------------------------------
 
-def get_all_palettes(palette_regex, maxp):
-    print(f"all palette search:{palette_regex}")
-    pat = regex.compile(palette_regex)
-    out = []
-    for k in colors.COLOR_STRINGS.keys():
-        if pat.search(k):
-            print(f"found palette: {k}")
-            out.append(k)
-            if len(out) >= maxp:
-                break
-    return out
 
-def get_long_palettes(palette_regex, maxp):
-    print(f"long palette search:{palette_regex}")
-    pat = regex.compile(palette_regex)
-    out = []
-    for k in colors.COLOR_LONG_STRINGS.keys():
-        if pat.search(k):
-            print(f"found palette: {k}")
-            out.append(k)
-            if len(out) >= maxp:
-                break
-    return out
+def write_used_macros(path: Path, run_spec: str) -> None:
+    ts = time.strftime("%Y-%m-%d %H:%M:%S %z")
+    lines = [f"# {ts}", f"@RUN={run_spec}"]
 
-def get_tri_palettes(palette_regex, maxp):
-    print(f"tri palette search:{palette_regex}")
-    pat = regex.compile(palette_regex)
-    out = []
-    for k in colors.COLOR_TRI_STRINGS.keys():
-        if pat.search(k):
-            print(f"found palette: {k}")
-            out.append(k)
-            if len(out) >= maxp:
-                break
-    return out
+    # preserve macro insertion order (do NOT sort)
+    for k, v in expander.MACROS.items():
+        lines.append(f"{k}={v}")
+
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -288,8 +261,7 @@ def main() -> None:
     )
 
     p.add_argument(
-        "--spec",
-        required=True,
+        "spec",
         help="Lyapunov spec (can include expandspec lists/ranges).",
     )
     p.add_argument(
@@ -315,70 +287,53 @@ def main() -> None:
         help="Output JPG path (can itself be an expandspec template).",
     )
     p.add_argument(
-        "--cols",
-        type=int,
-        default=None,
-        help="Columns if chain expands to multiple tiles.",
+        "--macro-add",
+        action="append",
+        default=[],
+        dest="macro_add",
+        help="Add/override MACRO like @NAME=VALUE. Repeatable.",
     )
     p.add_argument(
-        "--rows",
-        type=int,
-        default=None,
-        help="Rows if chain expands to multiple tiles.",
+        "--macro",
+        type=str,
+        default="macros.txt",
+        help="Macro file.",
     )
     p.add_argument(
-        "--invert",
+        "--dry",
         action="store_true",
-        help="Invert final RGB colors (simple negative).",
-    )
-    p.add_argument(
-        "--thumb",
-        type=int,
-        default=None,
-        help="Thumbnail height in pixels (if set, save mosaic as thumbnail).",
-    )
-    p.add_argument(
-        "--const",
-        action="append",
-        default=[],
-        help="Add/override NAME=VALUE (parsed like spec args). Repeatable.",
-    )
-    p.add_argument(
-        "--pal",
-        action="append",
-        default=[],
-        help="add palette",
+        help="Dry run.",
     )
     
 
     args = p.parse_args()
 
-    # Apply constants (like in julia.py)
-    for kv in args.const:
-        print(f"const {kv}")
-        k, v = specparser._parse_const_kv(kv)
-        specparser.set_const(k, v)
-        expandspec.set_const(k, v)
+    expander.macro_init(args.macro)
 
-    for kv in args.pal:
-        print(f"adding palette {kv}")
+    # Apply macro overrides/additions
+    for kv in args.macro_add:
+        print(f"macro {kv}")
         k, v = kv.split("=", 1)
-        colors.COLOR_STRINGS[k]=v
+        k = k.strip()
+        v = v.strip()
+        if not k.startswith("@"):
+            k = "@" + k
+        expander.MACROS[k] = v
 
-    # Expand output path first
-    out_paths = expandspec.expand_cartesian_lists(args.out)
-    if not out_paths:
-        raise SystemExit("Output expandspec produced no paths")
-    outfile = out_paths[0]
-    print(f"will save to {outfile}")
 
-    # spec expansion helpers
-    expandspec.FUNCS["gap"]=get_all_palettes
-    expandspec.FUNCS["glp"]=get_long_palettes
-    expandspec.FUNCS["gtp"]=get_tri_palettes
+    out_schema = Path(args.out)
+    outdir = out_schema.resolve().parent
+    stem = out_schema.stem
+    suffix = out_schema.suffix or ".jpg"
+    if not suffix.startswith("."):
+        suffix = "." + suffix
+
+    print(f"will save to {outdir} as {stem}_NNNNN{suffix}")
+    outdir.mkdir(parents=True, exist_ok=True)
 
     # Expand the main spec chain
-    specs = expandspec.expand_cartesian_lists(args.spec)
+    # specs = expandspec.expand_cartesian_lists(args.spec)
+    specs = expander.expand(expander.macro(args.spec))
     
     if args.show_specs:
         for s in specs:
@@ -387,30 +342,50 @@ def main() -> None:
     if not specs:
         raise SystemExit("Spec expansion produced no tiles")
 
-    fns = []
     for i, spec in enumerate(specs, start=1):
-        fn = raster.add_suffix_number(outfile,i)
-        fns.append(fn)
-        if not Path(fn).exists() or args.overwrite:
-            print(f"{i}/{len(specs)} Rendering {spec}")
-            t0 = time.perf_counter()
-            rgb = spec2lyapunov(spec, pix=args.pix)
-            print(f"field time: {time.perf_counter() - t0:.3f}s")
-            rgb = np.flipud(rgb)
-            raster.save_jpg_rgb(
-                rgb,
-                out_path=fn,
-                invert=False,
-                footer_text=spec,
-                footer_pad_lr_px=48,
-                footer_dpi=300,
-            )
-            print(f"saved: {fn}")
-        else:
-            print(f"{fn} exists, skipping")
+        sid = specparser.slot_suffix(spec, width=5)
+        out_path = outdir / f"{stem}_{sid}{suffix}"
+        tmp_path = outdir / f"{stem}_{sid}__tmp{suffix}"
+    
+        if out_path.exists() and not args.overwrite:
+            print(f"{out_path} exists, skipping")
+            continue
 
-    lines = [f"{fn} {spec}" for fn, spec in zip(fns, specs)]
-    Path(Path(outfile).name).with_suffix(".spec").write_text("\n".join(lines))
+        print(f"{i}/{len(specs)} Rendering {spec}")
+        t0 = time.perf_counter()
+
+        if args.dry:
+            continue
+
+        rgb = spec2lyapunov(spec, pix=args.pix)
+        print(f"field time: {time.perf_counter() - t0:.3f}s")
+
+        rgb = np.flipud(rgb)
+
+        raster.save_jpg_rgb(
+            rgb,
+            out_path=str(tmp_path),
+            invert=False,
+            footer_text=spec,
+            footer_pad_lr_px=48,
+            footer_dpi=300,
+            spec=spec,
+            keep_metadata=True,
+        )
+        print(f"saved: {tmp_path}")
+
+        subprocess.run(
+            ["bash", "autolevels.sh", str(tmp_path), str(out_path)],
+            check=True,
+        )
+
+        tmp_path.unlink()
+        print(f"autoleveled: {out_path} (deleted {tmp_path})")
+
+    # Save the macro state used for this run
+    used_macros_path = outdir / "used_macros.txt"
+    write_used_macros(used_macros_path, run_spec=args.spec)
+    print(f"wrote: {used_macros_path}")
 
 
 if __name__ == "__main__":
