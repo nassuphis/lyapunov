@@ -26,6 +26,7 @@ PI = math.pi
 PI = math.pi
 PI_OVER_2 = 0.5 * PI
 
+_C = types.complex128
 
 # ---------------------------------------------------------------------------
 # Tiny Numba helpers used inside map expressions
@@ -160,6 +161,37 @@ def cwavgtp(x1,x2,v,pow,frac):
 def f2i(x,imin,imax):
     return min(max(int(x),imin),imax)
 
+@njit(cache=True, fastmath=True)
+def polevl(x, coef):
+    # Evaluate polynomial with coef[0]..coef[n-1] (degree n-1), Cephes order.
+    # y = coef[0]*x^(n-1) + ... + coef[n-2]*x + coef[n-1]
+    y = 0.0
+    for c in coef:
+        y = y * x + c
+    return y
+
+@njit(cache=True, fastmath=True)
+def p1evl(x, coef):
+    # Evaluate (x + coef[0]) * x^(n-1) + ...? Cephes p1evl:
+    # y = (x + coef[0]) * x^(n-1) + coef[1]*x^(n-2) + ... + coef[n-1]
+    y = x + coef[0]
+    for i in range(1, len(coef)):
+        y = y * x + coef[i]
+    return y
+
+@njit(cache=True, fastmath=True)
+def chbevl(x, coef):
+    # Chebyshev evaluation on [-1,1] (Cephes chbevl, Clenshaw)
+    b0 = 0.0
+    b1 = 0.0
+    b2 = 0.0
+    for c in coef:
+        b2 = b1
+        b1 = b0
+        b0 = x * b1 - b2 + c
+    return 0.5 * (b0 - b2)
+
+# Bessel, order 0     
 @njit
 def j0s(x):
     ax = abs(x)
@@ -175,106 +207,147 @@ def j0s(x):
             np.sin(xx)*(0.01562499997 - y*(0.000143048876 - y*0.000000243))
         )
     
-@njit("float64(float64)", fastmath=True, cache=True)
-def j0(x):
-    ax = x if x >= 0.0 else -x
+# Bessel, order 1
+@njit(cache=True, fastmath=True)
+def j1s(x):
+    ax = abs(x)
+    # --- small |x|: J1(x) = x/2 - x^3/16 + x^5/384 - x^7/18432 + x^9/1474560 - ...
+    # This is cheap and quite decent up to ~3-4; beyond that it degrades.
+    if ax < 4.0:
+        y = x * x
+        # Horner in y for: x*(1/2 + y*(-1/16 + y*(1/384 + y*(-1/18432 + y*(1/1474560)))))
+        return x * (0.5 + y * (-0.0625 + y * (0.0026041666666666665
+                      + y * (-5.425347222222222e-05
+                      + y * (6.781684027777778e-07)))))
 
-    # Near zero: J0(x) ≈ 1 - x²/4
-    if ax < 1e-8:
-        return 1.0 - 0.25 * x * x
-
-    # Power series: J0(x) = Σ (-1)^k (x²/4)^k / (k!)²
-    if ax < 20.0:
-        y = (x * x) * 0.25
-        term = 1.0
-        s = 1.0
-        # 20 terms is plenty for double precision on this range
-        for k in range(1, 20):
-            term *= -y / (k * k)
-            s += term
-        return s
-
-    # Asymptotic for large |x|: J0(x) ~ sqrt(2/(πx)) cos(x - π/4)
+    # --- large |x|: Hankel-type asymptotic with 1/x and 1/x^2 corrections
+    # J1(x) ~ sqrt(2/(pi*ax)) * [ cos(ax-3pi/4)*P(1/ax^2) - sin(ax-3pi/4)*Q(1/ax) ]
+    # Using first couple terms from standard asymptotic expansion.
     t = ax
-    return math.sqrt(2.0 / (math.pi * t)) * math.cos(t - 0.25 * math.pi)
+    inv = 1.0 / t
+    inv2 = inv * inv
 
+    chi = t - 0.75 * np.pi  # ax - 3π/4
+    c = np.cos(chi)
+    s = np.sin(chi)
 
-@njit("float64(float64)", fastmath=True, cache=True)
-def j1(x):
-    ax = x if x >= 0.0 else -x
+    # For ν=1: μ=4ν^2=4
+    # P ≈ 1 - 3/(8x)^2 = 1 - 3/(64 x^2)
+    # Q ≈ 3/(8x) - 15/( (8x)^3 )  (keep 1/x and 1/x^3 terms; here we include 1/x only for speed)
+    P = 1.0 - (3.0 / 64.0) * inv2
+    Q = (3.0 / 8.0) * inv  # (drop next term for speed)
 
-    # Near zero: J1(x) ≈ x/2
-    if ax < 1e-8:
-        return 0.5 * x
+    val = np.sqrt(2.0 / (np.pi * t)) * (c * P - s * Q)
+    return -val if x < 0.0 else val  # J1 is odd
 
-    # Power series: J1(x) = Σ (-1)^k (x/2)^{2k+1} / (k!(k+1)!)
-    if ax < 20.0:
-        # k = 0 term
-        term = 0.5 * x
-        s = term
-        y = (x * x) * 0.25
-        for k in range(1, 20):
-            term *= -y / (k * (k + 1))
-            s += term
-        return s
+# Modified Bessel, order 0  
+@njit(cache=True, fastmath=True)
+def i0s(x):
+    ax = abs(x)
 
-    # Asymptotic: J1(x) ~ sqrt(2/(πx)) cos(x - 3π/4)
+    # I0(x) = 1 + x^2/4 + x^4/64 + x^6/2304 + x^8/147456 + ...
+    if ax < 6.0:
+        y = x * x
+        return (1.0
+                + y * (0.25
+                + y * (0.015625
+                + y * (0.00043402777777777775
+                + y * (6.781684027777778e-06)))))
+
+    # I0(x) ~ exp(ax)/sqrt(2*pi*ax) * (1 + 1/(8ax) + 9/(128 ax^2) + ...)
     t = ax
-    val = math.sqrt(2.0 / (math.pi * t)) * math.cos(t - 0.75 * math.pi)
-    # J1(-x) = -J1(x)
-    return -val if x < 0.0 else val
+    inv = 1.0 / t
+    inv2 = inv * inv
+    poly = 1.0 + (1.0/8.0)*inv + (9.0/128.0)*inv2
+    return np.exp(t) * poly / np.sqrt(2.0 * np.pi * t)
 
+# Modified Bessel, order 1
+@njit(cache=True, fastmath=True)
+def i1s(x):
+    ax = abs(x)
 
-@njit("float64(float64)", fastmath=True, cache=True)
-def i0(x):
-    ax = x if x >= 0.0 else -x
+    # I1(x) = x/2 + x^3/16 + x^5/384 + x^7/18432 + x^9/1474560 + ...
+    if ax < 6.0:
+        y = x * x
+        return x * (0.5 + y * (0.0625 + y * (0.0026041666666666665
+                     + y * (5.425347222222222e-05
+                     + y * (6.781684027777778e-07)))))
 
-    # Near zero: I0(x) ≈ 1 + x²/4
-    if ax < 1e-8:
-        return 1.0 + 0.25 * x * x
-
-    # Power series: I0(x) = Σ (x²/4)^k / (k!)²
-    if ax < 15.0:
-        y = 0.25 * x * x
-        term = 1.0
-        s = 1.0
-        for k in range(1, 50):
-            term *= y / (k * k)
-            s += term
-        return s
-
-    # Asymptotic: I0(x) ~ exp(x)/sqrt(2πx)
+    # I1(x) ~ exp(ax)/sqrt(2*pi*ax) * (1 - 3/(8ax) + 15/(128 ax^2) + ...)
     t = ax
-    val = math.exp(t) / math.sqrt(2.0 * math.pi * t)
-    return val
+    inv = 1.0 / t
+    inv2 = inv * inv
+    poly = 1.0 - (3.0/8.0)*inv + (15.0/128.0)*inv2
+    val = np.exp(t) * poly / np.sqrt(2.0 * np.pi * t)
+    return -val if x < 0.0 else val  # I1 is odd
+
+DEFAULT_BESSEL_N = 20
+
+@njit(_C(_C), fastmath=True, cache=True)
+def j0(z):
+    # J0(z) = sum_{k>=0} (-1)^k (z^2/4)^k / (k!)^2
+    zz = (z * z) * 0.25
+    term = 1.0 + 0.0j
+    s = term
+    # ratio update: term_{k+1} = term_k * (-(z^2/4))/((k+1)^2)
+    for k in range(1, DEFAULT_BESSEL_N):
+        kk = float(k)
+        term *= (-zz) / (kk * kk)
+        s += term
+        if np.abs(term) < 1e-16 * np.abs(s):
+            break
+    return s
 
 
-@njit("float64(float64)", fastmath=True, cache=True)
-def i1(x):
-    ax = x if x >= 0.0 else -x
-
-    # Near zero: I1(x) ≈ x/2
-    if ax < 1e-8:
-        return 0.5 * x
-
-    # Power series: I1(x) = Σ (x/2)^{2k+1} / (k!(k+1)!)
-    if ax < 15.0:
-        y = 0.25 * x * x
-        term = 0.5 * x  # k=0
-        s = term
-        for k in range(1, 50):
-            term *= y / (k * (k + 1))
-            s += term
-        return s
-
-    # Asymptotic: I1(x) ~ exp(x)/sqrt(2πx)
-    t = ax
-    val = math.exp(t) / math.sqrt(2.0 * math.pi * t)
-    # I1(-x) = -I1(x)
-    return -val if x < 0.0 else val
+@njit(_C(_C), fastmath=True, cache=True)
+def j1(z):
+    # J1(z) = sum_{k>=0} (-1)^k (z/2)^{2k+1} / (k!(k+1)!)
+    # Start with k=0 term: z/2
+    halfz = 0.5 * z
+    term = halfz
+    s = term
+    # ratio update: term_{k+1} = term_k * (-(z^2/4))/((k+1)(k+2))
+    zz = (z * z) * 0.25
+    for k in range(0, DEFAULT_BESSEL_N):
+        k1 = float(k + 1)
+        term *= (-zz) / (k1 * (k1 + 1.0))
+        s += term
+        if np.abs(term) < 1e-16 * np.abs(s):
+            break
+    return s
 
 
+@njit(_C(_C), fastmath=True, cache=True)
+def i0(z):
+    # I0(z) = sum_{k>=0} (z^2/4)^k / (k!)^2
+    zz = (z * z) * 0.25
+    term = 1.0 + 0.0j
+    s = term
+    for k in range(1, DEFAULT_BESSEL_N):
+        kk = float(k)
+        term *= (zz) / (kk * kk)
+        s += term
+        if np.abs(term) < 1e-16 * np.abs(s):
+            break
+    return s
 
+
+@njit(_C(_C), fastmath=True, cache=True)
+def i1(z):
+    # I1(z) = sum_{k>=0} (z/2)^{2k+1} / (k!(k+1)!)
+    halfz = 0.5 * z
+    term = halfz
+    s = term
+    zz = (z * z) * 0.25
+    for k in range(0, DEFAULT_BESSEL_N):
+        k1 = float(k + 1)
+        term *= (zz) / (k1 * (k1 + 1.0))
+        s += term
+        if np.abs(term) < 1e-16 * np.abs(s):
+            break
+    return s
+
+DEFAULT_AIRY_N = 20
 
 @njit(types.float64(types.float64, types.float64, types.float64), fastmath=True, cache=True)
 def _airy_series(x, c0, c1):
@@ -288,7 +361,7 @@ def _airy_series(x, c0, c1):
     """
     x3 = x * x * x
     y = 0.0
-    kmax = 50
+    kmax = DEFAULT_AIRY_N
     tol = 1e-16
 
     # branch n0 = 0: n = 0, 3, 6, ...
@@ -887,158 +960,136 @@ def gd(x):
 # 1. Spherical Bessel j_n(x)
 # ============================================================
 
-@njit(types.float64(types.int64, types.float64), fastmath=True, cache=True)
-def sbessel(n, x):
+@njit(types.float64(types.int64), cache=True, fastmath=True)
+def _double_fact_odd(m):
+    # m is expected odd and >= 1; returns (m)!! as float64
+    d = 1.0
+    k = 1
+    while k <= m:
+        d *= k
+        k += 2
+    return d
+
+@njit(types.complex128(types.int64, types.complex128), cache=True, fastmath=True)
+def sbessel(n, z):
     """
-    Spherical Bessel function j_n(x) for integer n >= 0 (real x).
-
-    Uses:
-        j0(x) = sin x / x
-        j1(x) = sin x / x^2 - cos x / x
-        j_{n+1}(x) = (2n+1)/x * j_n(x) - j_{n-1}(x)
-
-    For |x| very small, uses simple small-x limits:
-        j0(0) = 1, j1(0) ~ x/3, j_n(0) ~ 0 for n>=2
+    Spherical Bessel j_n(z), complex z, integer n >= 0.
     """
     if n < 0:
-        return math.nan
+        return np.nan + 0.0j
 
-    ax = x if x >= 0.0 else -x
-
-    # small-x handling
-    if ax < 1e-8:
+    az = np.abs(z)
+    if az < 1e-8:
+        # small-z series leading term:
+        # j_n(z) ~ z^n / (2n+1)!!
         if n == 0:
-            return 1.0
-        elif n == 1:
-            return x / 3.0
-        else:
-            return 0.0
+            return 1.0 + 0.0j
+        # compute z^n by repeated multiply (numba-safe)
+        zp = 1.0 + 0.0j
+        for _ in range(n):
+            zp *= z
+        denom = _double_fact_odd(2 * n + 1)
+        return zp / denom
 
-    # j0
     if n == 0:
-        return math.sin(x) / x
+        return np.sin(z) / z
 
-    # j1
     if n == 1:
-        return math.sin(x) / (x * x) - math.cos(x) / x
+        return (np.sin(z) / (z * z)) - (np.cos(z) / z)
 
-    # upward recurrence
-    jnm1 = math.sin(x) / x                                      # j0
-    jn = math.sin(x) / (x * x) - math.cos(x) / x                # j1
+    jnm1 = np.sin(z) / z
+    jn   = (np.sin(z) / (z * z)) - (np.cos(z) / z)
 
     for k in range(1, n):
         kf = float(k)
-        jnp1 = ((2.0 * kf + 1.0) / x) * jn - jnm1
+        jnp1 = ((2.0 * kf + 1.0) / z) * jn - jnm1
         jnm1 = jn
-        jn = jnp1
+        jn   = jnp1
 
     return jn
 
 
-@njit(types.float64(types.float64), fastmath=True, cache=True)
-def sbs1(x):
-    return sbessel(1,x)
-
-@njit(types.float64(types.float64), fastmath=True, cache=True)
-def sbs2(x):
-    return sbessel(2,x)
-
-@njit(types.float64(types.float64), fastmath=True, cache=True)
-def sbs3(x):
-    return sbessel(3,x)
-
-@njit(types.float64(types.float64), fastmath=True, cache=True)
-def sbs4(x):
-    return sbessel(4,x)
+@njit(types.complex128(types.complex128), cache=True, fastmath=True)
+def sbs1(z): return sbessel(1, z)
+@njit(types.complex128(types.complex128), cache=True, fastmath=True)
+def sbs2(z): return sbessel(2, z)
+@njit(types.complex128(types.complex128), cache=True, fastmath=True)
+def sbs3(z): return sbessel(3, z)
+@njit(types.complex128(types.complex128), cache=True, fastmath=True)
+def sbs4(z): return sbessel(4, z)
 
 # ============================================================
 # 2. Chebyshev polynomials T_n(x), U_n(x)
 # ============================================================
 
-@njit(types.float64(types.int64, types.float64), fastmath=True, cache=True)
-def chebt(n, x):
+@njit(types.complex128(types.int64, types.complex128), fastmath=True, cache=True)
+def chebt(n, z):
     """
-    Chebyshev polynomial of the first kind T_n(x).
+    Chebyshev T_n(z) (first kind), complex z.
 
-        T_0(x) = 1
-        T_1(x) = x
-        T_{n+1}(x) = 2x T_n(x) - T_{n-1}(x)
+      T_0 = 1
+      T_1 = z
+      T_{k+1} = 2 z T_k - T_{k-1}
     """
     if n < 0:
-        return math.nan
+        return complex(float('nan'), 0.0)
+
     if n == 0:
-        return 1.0
+        return 1.0 + 0.0j
     if n == 1:
-        return x
+        return z
 
-    Tnm1 = 1.0  # T_0
-    Tn = x      # T_1
-
+    Tnm1 = 1.0 + 0.0j
+    Tn   = z
     for _ in range(1, n):
-        Tnp1 = 2.0 * x * Tn - Tnm1
+        Tnp1 = 2.0 * z * Tn - Tnm1
         Tnm1 = Tn
-        Tn = Tnp1
-
+        Tn   = Tnp1
     return Tn
 
-@njit(types.float64(types.float64), fastmath=True, cache=True)
-def cht1(x):
-    return chebt(1,x)
-
-@njit(types.float64(types.float64), fastmath=True, cache=True)
-def cht2(x):
-    return chebt(2,x)
-
-@njit(types.float64(types.float64), fastmath=True, cache=True)
-def cht3(x):
-    return chebt(3,x)
-
-@njit(types.float64(types.float64), fastmath=True, cache=True)
-def cht4(x):
-    return chebt(4,x)
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def cht1(z): return chebt(1, z)
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def cht2(z): return chebt(2, z)
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def cht3(z): return chebt(3, z)
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def cht4(z): return chebt(4, z)
 
 
-@njit(types.float64(types.int64, types.float64), fastmath=True, cache=True)
-def chebu(n, x):
+@njit(types.complex128(types.int64, types.complex128), fastmath=True, cache=True)
+def chebu(n, z):
     """
-    Chebyshev polynomial of the second kind U_n(x).
+    Chebyshev U_n(z) (second kind), complex z.
 
-        U_0(x) = 1
-        U_1(x) = 2x
-        U_{n+1}(x) = 2x U_n(x) - U_{n-1}(x)
+      U_0 = 1
+      U_1 = 2 z
+      U_{k+1} = 2 z U_k - U_{k-1}
     """
     if n < 0:
-        return math.nan
+        return complex(float('nan'), 0.0)
+
     if n == 0:
-        return 1.0
+        return 1.0 + 0.0j
     if n == 1:
-        return 2.0 * x
+        return 2.0 * z
 
-    Unm1 = 1.0        # U_0
-    Un = 2.0 * x      # U_1
-
+    Unm1 = 1.0 + 0.0j
+    Un   = 2.0 * z
     for _ in range(1, n):
-        Unp1 = 2.0 * x * Un - Unm1
+        Unp1 = 2.0 * z * Un - Unm1
         Unm1 = Un
-        Un = Unp1
-
+        Un   = Unp1
     return Un
 
-@njit(types.float64(types.float64), fastmath=True, cache=True)
-def chu1(x):
-    return chebu(1,x)
-
-@njit(types.float64(types.float64), fastmath=True, cache=True)
-def chu2(x):
-    return chebu(2,x)
-
-@njit(types.float64(types.float64), fastmath=True, cache=True)
-def chu3(x):
-    return chebu(3,x)
-
-@njit(types.float64(types.float64), fastmath=True, cache=True)
-def chu4(x):
-    return chebu(4,x)
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def chu1(z): return chebu(1, z)
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def chu2(z): return chebu(2, z)
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def chu3(z): return chebu(3, z)
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def chu4(z): return chebu(4, z)
 
 
 # ============================================================
@@ -1207,105 +1258,84 @@ def he4(x):
 # Laguerre polynomials L_n(x) (α = 0)
 # ============================================================
 
-@njit(types.float64(types.int64, types.float64), fastmath=True, cache=True)
-def laguerre(n, x):
+@njit(types.complex128(types.int64, types.complex128), fastmath=True, cache=True)
+def laguerre(n, z):
     """
-    Laguerre polynomials L_n(x) with α = 0:
+    Laguerre polynomial L_n(z) with alpha=0, complex z.
 
-        L_0(x) = 1
-        L_1(x) = 1 - x
-        (n+1)L_{n+1}(x) = (2n+1 - x)L_n(x) - n L_{n-1}(x)
-
-    n >= 0, x >= 0 typically.
+      L_0(z) = 1
+      L_1(z) = 1 - z
+      (k+1) L_{k+1}(z) = (2k + 1 - z) L_k(z) - k L_{k-1}(z)
     """
     if n < 0:
-        return math.nan
-    if n == 0:
-        return 1.0
-    if n == 1:
-        return 1.0 - x
+        return complex(float('nan'), 0.0)
 
-    Lnm1 = 1.0        # L_0
-    Ln   = 1.0 - x    # L_1
+    if n == 0:
+        return 1.0 + 0.0j
+
+    if n == 1:
+        return 1.0 - z
+
+    Lnm1 = 1.0 + 0.0j   # L_0
+    Ln   = 1.0 - z      # L_1
 
     for k in range(1, n):
         kf = float(k)
-        Lnp1 = ((2.0 * kf + 1.0 - x) * Ln - kf * Lnm1) / (kf + 1.0)
+        Lnp1 = ((2.0 * kf + 1.0 - z) * Ln - kf * Lnm1) / (kf + 1.0)
         Lnm1 = Ln
         Ln   = Lnp1
 
     return Ln
 
-@njit(types.float64(types.float64), fastmath=True, cache=True)
-def la1(x):
-    return laguerre(1,x)
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def la1(z): return laguerre(1, z)
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def la2(z): return laguerre(2, z)
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def la3(z): return laguerre(3, z)
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def la4(z): return laguerre(4, z)
 
-@njit(types.float64(types.float64), fastmath=True, cache=True)
-def la2(x):
-    return laguerre(2,x)
-
-@njit(types.float64(types.float64), fastmath=True, cache=True)
-def la3(x):
-    return laguerre(3,x)
-
-@njit(types.float64(types.float64), fastmath=True, cache=True)
-def la4(x):
-    return laguerre(4,x)
-
-@njit(types.complex128(types.int64, types.float64, types.float64, types.complex128), fastmath=True, cache=True)
-def jacobi(n, alpha, beta, x):
+@njit(types.complex128(
+    types.int64,
+    types.complex128,
+    types.complex128,
+    types.complex128
+), fastmath=True, cache=True)
+def jacobi(n, alpha, beta, z):
     """
-    Jacobi polynomial P_n^{(alpha, beta)}(x), n >= 0, real alpha,beta,x.
+    Jacobi polynomial P_n^{(alpha, beta)}(z), complex parameters.
 
-    Recurrence (Szegő / Abramowitz-Stegun):
-
-        P_0^{(α,β)}(x) = 1
-        P_1^{(α,β)}(x) = 0.5 * [ (2+α+β)x + (α-β) ]
-
-    For n >= 1:
-
-        2(n+1)(n+α+β+1)(2n+α+β) P_{n+1}(x) =
-            (2n+α+β+1) [ (2n+α+β+2)(2n+α+β)x + α^2 - β^2 ] P_n(x)
-          - 2(n+α)(n+β)(2n+α+β+2) P_{n-1}(x)
-
-    This implementation is intended for small n (e.g. n <= 10–20) as
-    shape functions in iterated maps, not for extreme parameter regimes.
-
-    Legendre Jacobi(N,0,0,x)
-    ChebT Jacobi(N,-1/2,-1/2,x)
-    Gegenbauer Jacobi(N,lambda-1/2,1/2,x)
-
+    Valid analytic continuation in z for fixed alpha, beta.
+    Recurrence (Szegő / Abramowitz–Stegun).
     """
     if n < 0:
-        return math.nan
+        return np.nan + 0.0j
 
-    # P_0
     if n == 0:
-        return 1.0
+        return 1.0 + 0.0j
 
-    # P_1
     if n == 1:
-        return 0.5 * ((2.0 + alpha + beta) * x + (alpha - beta))
+        return 0.5 * ((2.0 + alpha + beta) * z + (alpha - beta))
 
-    # P_0 and P_1 as starting values
-    Pnm1 = 1.0
-    Pn = 0.5 * ((2.0 + alpha + beta) * x + (alpha - beta))
+    Pnm1 = 1.0 + 0.0j
+    Pn   = 0.5 * ((2.0 + alpha + beta) * z + (alpha - beta))
 
     for k in range(1, n):
         kf = float(k)
         two_k_ab = 2.0 * kf + alpha + beta
 
-        # coefficients in the recurrence
         A = 2.0 * (kf + 1.0) * (kf + alpha + beta + 1.0) * two_k_ab
-        B = (two_k_ab + 1.0) * ((two_k_ab + 2.0) * two_k_ab * x +
-                                (alpha * alpha - beta * beta))
+        B = (two_k_ab + 1.0) * (
+              (two_k_ab + 2.0) * two_k_ab * z
+              + (alpha * alpha - beta * beta)
+            )
         C = 2.0 * (kf + alpha) * (kf + beta) * (two_k_ab + 2.0)
 
-        # P_{k+1}
         Pnp1 = (B * Pn - C * Pnm1) / A
 
         Pnm1 = Pn
-        Pn = Pnp1
+        Pn   = Pnp1
 
     return Pn
 
@@ -1365,38 +1395,31 @@ def hahn(n, a, b, c, d, x):
 # sinc, sinhc, sech — cheap but very nice shapes
 # ============================================================
 
-@njit(types.float64(types.float64), fastmath=True, cache=True)
-def sinc(x):
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def sinc(z):
     """
-    Unnormalized sinc: sinc(x) = sin(x)/x, with a safe limit at x=0.
-
-    You can always call sinc(pi * x) if you want the normalized sinc.
+    sinc(z) = sin(z)/z with analytic continuation at z=0.
     """
-    ax = x if x >= 0.0 else -x
-    if ax < 1e-8:
-        # Taylor: sin x / x ≈ 1 - x^2/6
-        return 1.0 - (x * x) / 6.0
-    return math.sin(x) / x
+    if np.abs(z) < 1e-8:
+        # sin(z)/z ≈ 1 - z^2/6
+        return 1.0 - (z * z) / 6.0
+    return np.sin(z) / z
 
 
-@njit(types.float64(types.float64), fastmath=True, cache=True)
-def sinhc(x):
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def sinhc(z):
     """
-    Hyperbolic sinc: sinhc(x) = sinh(x)/x, with limit 1 at x=0.
+    sinhc(z) = sinh(z)/z with analytic continuation at z=0.
     """
-    ax = x if x >= 0.0 else -x
-    if ax < 1e-8:
-        # Taylor: sinh x / x ≈ 1 + x^2/6
-        return 1.0 + (x * x) / 6.0
-    return math.sinh(x) / x
+    if np.abs(z) < 1e-8:
+        # sinh(z)/z ≈ 1 + z^2/6
+        return 1.0 + (z * z) / 6.0
+    return np.sinh(z) / z
 
 
-@njit(types.float64(types.float64), fastmath=True, cache=True)
-def sech(x):
-    """
-    Hyperbolic secant: sech(x) = 1 / cosh(x).
-    """
-    return 1.0 / math.cosh(x)
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def sech(z):
+    return 1.0 / np.cosh(z)
 
 
 NS = {
@@ -1437,6 +1460,9 @@ NS = {
     "abs_cap": abs_cap,
     "norm": norm,
     "j0s": j0s,
+    "j1s": j0s,
+    "i0s": i0s,
+    "i0s": i1s,
     "j0": j0,
     "j1": j1,
     "i0": i0,
