@@ -1,0 +1,94 @@
+# ----------------------------------------------------------
+#
+# randomized NN14 map generator
+#
+# ----------------------------------------------------------
+@RUN=@LYAP0
+@LYAP0=slot:{1:@SLOTS0},@MAP14,@M0,@RGB0,@HIST0
+# ----------------------------------------------------------
+# number of samples
+@SLOTS0=100
+# ----------------------------------------------------------
+# map selection
+@MAP14=map:nn14:AB:-20:-20:20:20
+# ----------------------------------------------------------
+# colorization uses the "palette field" decomposition
+# based on frequency ratios
+# colorization input is function of histogram of map orbit
+@RGB0=rgb:pfm:@PAL0:1.2:@S0
+@S0=s1=#{rfloat3(0.1,1.0)}:s2=#{rfloat3(0.1,1.0)}:s3=#{rfloat3(0.1,1.0)}:se=1.0
+@PAL0=#{r2line("tri_warm.txt","tri_cool.txt")}
+@HIST0=hist:6:6:512
+# ----------------------------------------------------------
+# the "m" entry for the NN14 map contains 5 elements
+# averaging method
+# the LHS of the average is a some special function that has order, parameters, value
+# the oder of the special function is a number 1-7
+# the parameters are some random functions or constants
+# the function is a random combi of functions of r,x and l
+#
+# each component has to be a string.
+# strings are generated inside #{...} the render-time tag
+@M0=m:#{f"{@AVG0}({@SPEC0},cos(l),x,1/2)"}
+# ----------------------------------------------------------
+# the averaging method
+@AVG0=choose("cwavg","cwavgt")
+# ----------------------------------------------------------
+# the special function selection
+@SPEC0=choose(@SPECS0,@SPECS1,@SPECS2)
+@SPECS0=@PMEIXPOL,@PJACOBI,@PLEGENDRE,@PSBESSEL
+@SPECS1=@PCHEBT,@PCHEBU,@PHERMITE,@PLAGUERRE
+@SPECS2=@PLEGENDRE,@PAIRA,@PAIRB
+# ----------------------------------------------------------
+# the special functions
+@PMEIXPOL=f"meixpol({@ORD0},{@MPAR0},{@MPAR0},{@MFUN0})"
+@PJACOBI=f"jacobi({@ORD0},{@MPAR0},{@MPAR0},{@MFUN0})"
+@PLEGENDRE=f"legendre({@ORD0},np.real({@MFUN0}))"
+@PSBESSEL=f"sbessel({@ORD0},{@MFUN0})"
+@PCHEBT=f"chebt({@ORD0},{@MFUN0})"
+@PCHEBU=f"chebu({@ORD0},{@MFUN0})"
+@PHERMITE=f"hermite({@ORD0},np.real({@MFUN0}))"
+@PLAGUERRE=f"laguerre({@ORD0},{@MFUN0})"
+@PAIRA=f"aira({@MFUN0})"
+@PAIRB=f"airb({@MFUN0})"
+# ----------------------------------------------------------
+# integer order
+@ORD0=choose("1","2","3","4","5","6","7")
+# ----------------------------------------------------------
+#
+# random parameter expression
+#
+@MPAR0=choose(@PAR0,@PAR1,@PAR2,@PAR3,@PAR4,@PAR5)
+@PAR0=f"{rfloat3(-1.5,+1.5)}"
+@PAR1=f"{@SELVAR0}"
+@PAR2=f"{rline("fun.txt")}"
+@PAR3=f"{@FCALL0}+{@FCALL0}"
+@PAR4=f"{@FCALL0}*{@FCALL0}"
+@PAR5=f"cos({@FCALL0}+{@FCALL0}+{@FCALL0})"
+# ----------------------------------------------------------
+#
+# random function expression
+#
+@MFUN0=choose(@MFUN1,@MFUN2,@MFUN3,@MFUN4)
+# fun group 1
+@MFUN1=f"{@FCALL0}"
+# fun group 2
+@MFUN2=f"{@FCALL0}*{@FCALL0}"
+# fun group 3
+@MFUN3=f"{@FCALL0}*exp({@FCALL0}+1j*{@FCALL0})"
+# fun group 4
+@MFUN4=f"{@FCALL0}+{@FCALL0}"
+# ----------------------------------------------------------
+# make random function call
+@FCALL0=choose(@FUNS1,@FUNS2,@FUNS3,@FUNS4,@FUNS5,@FUNS6,@FUNS7,@FUNS8)
+@FUNS1=f"{@SELVAR0}"
+@FUNS2=f"cos({@SELVAR0})"
+@FUNS3=f"j0({@SELVAR0})",f"j1({@SELVAR0})",f"i0({@SELVAR0})",f"i1({@SELVAR0})"
+@FUNS4=f"aira(np.real({@SELVAR0}))",f"airb(np.real({@SELVAR0}))"
+@FUNS5=f"fres(np.real({@SELVAR0}))",f"frec(np.real({@SELVAR0}))"
+@FUNS6=f"lgamma({@SELVAR0})"
+@FUNS7=f"si({@SELVAR0})",f"ci({@SELVAR0})",f"ei({@SELVAR0})"
+@FUNS8=f"exp({@SELVAR0})",f"lambertw({@SELVAR0})"
+@SELVAR0= choose("r","x","l")
+
+

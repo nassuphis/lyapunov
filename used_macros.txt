@@ -1,0 +1,19 @@
+# 2025-12-17 21:11:27 +0200
+@RUN=@LYAP0
+@RUN=@LYAP1
+@LYAP0=slot:{1:@SLOTS0},@MAP14,@M0,@RGB0,@HIST0
+@SLOTS0=1
+@MAP14=map:nn14:AB:-20:-20:20:20
+@RGB0=rgb:pfm:@PAL1:1.2:@S1
+@S0=s1=#{rfloat3(0.1,1.0)}:s2=#{rfloat3(0.1,1.0)}:s3=#{rfloat3(0.1,1.0)}:se=1.0
+@PAL0=#{r2line("tri_warm.txt","tri_cool.txt")}
+@HIST0=hist:6:6:512
+@M0=m:@AVG0(@MPOLY0(@ORD0,@MPAR0,@MPAR0,@MFUN0),cos(l),x,1/2)
+@AVG0=#{choose("cwavg","cwavgt")}
+@MPOLY0=#{choose("meixpol","jacobi")}
+@ORD0=#{choose("1","2","3","4","5","6","7")}
+@MPAR0=#{rfloat3(-1.5,+1.5)}
+@MFUN0=#{choose(@FUN1,)}
+@MFUN2=@SELFUN0(#{rline("fun.txt")})
+@MFUN3="exp(" + @SELFUN0+"(x) + 1j* " + @SELFUN0 + "(l)  )"
+@SELFUN0=#{choose("i","cos","j0","j1","i0","i1","aira","airb","fres","frec","lgamma","si","ci","ei","exp","lambertw")}

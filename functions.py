@@ -629,33 +629,33 @@ def dawson(x):
 def erfi(x):
     return (2.0 / SQRT_PI) * math.exp(x * x) * dawson(x)
 
-@njit(types.float64(types.int64, types.float64), fastmath=True, cache=True)
-def legendre(n, x):
-    if n < 0:  return math.nan
-    if n == 0: return 1.0
-    if n == 1: return x
-    Pnm1 = 1.0   # P_0
-    Pn = x       # P_1
+@njit(types.complex128(types.int64, types.complex128), fastmath=True, cache=True)
+def legendre(n, z):
+    if n < 0:  return complex(np.nan, 0.0)
+    if n == 0: return 1.0 + 0.0j
+    if n == 1: return z
+    Pnm1 = 1.0 + 0.0j
+    Pn   = z
     for k in range(1, n):
         kf = float(k)
-        Pnp1 = ((2.0 * kf + 1.0) * x * Pn - kf * Pnm1) / (kf + 1.0)
+        Pnp1 = ((2.0*kf + 1.0)*z*Pn - kf*Pnm1) / (kf + 1.0)
         Pnm1 = Pn
-        Pn = Pnp1
+        Pn   = Pnp1
     return Pn
 
-@njit(types.float64(types.float64), fastmath=True, cache=True)
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
 def le1(x):
     return legendre(1,x)
 
-@njit(types.float64(types.float64), fastmath=True, cache=True)
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
 def le2(x):
     return legendre(2,x)
 
-@njit(types.float64(types.float64), fastmath=True, cache=True)
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
 def le3(x):
     return legendre(3,x)
 
-@njit(types.float64(types.float64), fastmath=True, cache=True)
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
 def le4(x):
     return legendre(4,x)
 
@@ -1157,48 +1157,49 @@ def lint(x):
 # Hermite polynomials H_n(x) (physicists' convention)
 # ============================================================
 
-@njit(types.float64(types.int64, types.float64), fastmath=True, cache=True)
-def hermite(n, x):
+@njit(types.complex128(types.int64, types.complex128), fastmath=True, cache=True)
+def hermite(n, z):
     """
-    Physicists' Hermite polynomials H_n(x):
+    Physicists' Hermite polynomial H_n(z), complex z.
 
-        H_0(x) = 1
-        H_1(x) = 2x
-        H_{n+1}(x) = 2x H_n(x) - 2n H_{n-1}(x)
+        H_0(z) = 1
+        H_1(z) = 2 z
+        H_{n+1}(z) = 2 z H_n(z) - 2 n H_{n-1}(z)
 
-    n >= 0
+    Valid for all complex z.
     """
     if n < 0:
-        return math.nan
-    if n == 0:
-        return 1.0
-    if n == 1:
-        return 2.0 * x
+        return np.nan + 0.0j
 
-    Hnm1 = 1.0        # H_0
-    Hn   = 2.0 * x    # H_1
+    if n == 0:
+        return 1.0 + 0.0j
+
+    if n == 1:
+        return 2.0 * z
+
+    Hnm1 = 1.0 + 0.0j   # H_0
+    Hn   = 2.0 * z      # H_1
 
     for k in range(1, n):
-        kf = float(k)
-        Hnp1 = 2.0 * x * Hn - 2.0 * kf * Hnm1
+        Hnp1 = 2.0 * z * Hn - 2.0 * float(k) * Hnm1
         Hnm1 = Hn
         Hn   = Hnp1
 
     return Hn
 
-@njit(types.float64(types.float64), fastmath=True, cache=True)
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
 def he1(x):
     return hermite(1,x)
 
-@njit(types.float64(types.float64), fastmath=True, cache=True)
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
 def he2(x):
     return hermite(2,x)
 
-@njit(types.float64(types.float64), fastmath=True, cache=True)
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
 def he3(x):
     return hermite(3,x)
 
-@njit(types.float64(types.float64), fastmath=True, cache=True)
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
 def he4(x):
     return hermite(4,x)
 

@@ -5,7 +5,10 @@ import argparse
 from pathlib import Path
 import numpy as np
 import pyvips
+import zlib
 
+def slot_from_name(p: Path) -> str:
+    return p.stem.split("_")[-1]
 
 def vips_to_gray_np(im: pyvips.Image) -> np.ndarray:
     # Ensure 8-bit, then grayscale
@@ -32,12 +35,85 @@ def vips_to_gray_np(im: pyvips.Image) -> np.ndarray:
     )
     return arr
 
+def compressibility_stats(g_u8: np.ndarray) -> tuple[float, float]:
+    """
+    Returns (zlib_ratio, jpeg_q10_kb) on the downsampled grayscale.
+    zlib_ratio ~ compressed_size / raw_size (lower = more compressible).
+    jpeg_q10_kb = encoded bytes at Q=10 (lower = more compressible).
+    """
+    raw = g_u8.tobytes()
+    z = zlib.compress(raw, level=9)
+    zlib_ratio = len(z) / max(1, len(raw))
 
-def is_boring_jpg(path: Path,
-                  size_kb_max: int,
-                  std_raw_max: float,
-                  std_blur_max: float,
-                  lap_var_max: float) -> tuple[bool, dict]:
+    h, w = g_u8.shape
+    gv = pyvips.Image.new_from_memory(raw, w, h, 1, "uchar")
+    jb = gv.write_to_buffer(".jpg", Q=10, strip=True)  # bytes
+    jpeg_q10_kb = len(jb) / 1024.0
+
+    return float(zlib_ratio), float(jpeg_q10_kb)
+
+
+def sobel_stats_from_gray_u8(g_u8: np.ndarray) -> tuple[float, float, float]:
+    h, w = g_u8.shape
+    gv = pyvips.Image.new_from_memory(g_u8.tobytes(), w, h, 1, "uchar").cast("float")
+
+    kx = pyvips.Image.new_from_array([
+        [-1.0, 0.0,  1.0],
+        [-2.0, 0.0,  2.0],
+        [-1.0, 0.0,  1.0],
+    ])
+    ky = pyvips.Image.new_from_array([
+        [-1.0, -2.0, -1.0],
+        [ 0.0,  0.0,  0.0],
+        [ 1.0,  2.0,  1.0],
+    ])
+
+    gxv = gv.conv(kx)
+    gyv = gv.conv(ky)
+
+    gx = np.frombuffer(gxv.write_to_memory(), dtype=np.float32).reshape(gxv.height, gxv.width)
+    gy = np.frombuffer(gyv.write_to_memory(), dtype=np.float32).reshape(gyv.height, gyv.width)
+
+    mag = np.sqrt(gx * gx + gy * gy)
+    sobel_mean = float(mag.mean())
+    sobel_p95  = float(np.percentile(mag, 95.0))
+
+    # coherence in [0,1]
+    Jxx = gx * gx
+    Jyy = gy * gy
+    Jxy = gx * gy
+    tr = Jxx + Jyy
+    det_term = (Jxx - Jyy) * (Jxx - Jyy) + 4.0 * (Jxy * Jxy)
+    s = np.sqrt(np.maximum(det_term, 0.0))
+    l1 = 0.5 * (tr + s)
+    l2 = 0.5 * (tr - s)
+    coherence = float(np.mean((l1 - l2) / (l1 + l2 + 1e-6)))
+
+    return sobel_mean, sobel_p95, coherence
+
+def patch_std_stats(g_u8: np.ndarray, n: int = 8) -> tuple[float, float, float]:
+    """
+    Returns (patch_std_median, patch_std_iqr, patch_std_max)
+    on an n×n grid of patches.
+    """
+    g = g_u8.astype(np.float32)
+    h, w = g.shape
+    ys = np.linspace(0, h, n + 1, dtype=int)
+    xs = np.linspace(0, w, n + 1, dtype=int)
+
+    vals = []
+    for i in range(n):
+        for j in range(n):
+            block = g[ys[i]:ys[i + 1], xs[j]:xs[j + 1]]
+            vals.append(float(block.std()))
+
+    vals = np.asarray(vals, dtype=np.float64)
+    med = float(np.median(vals))
+    iqr = float(np.percentile(vals, 75) - np.percentile(vals, 25))
+    mx  = float(np.max(vals))
+    return med, iqr, mx
+
+def compute_stats(path: Path) -> dict:
     st = path.stat()
     size_kb = st.st_size / 1024.0
 
@@ -46,21 +122,16 @@ def is_boring_jpg(path: Path,
 
     std_raw = float(g.std())
 
-    # heavy blur via repeated box blur (fast enough + good proxy)
-    # (Gaussian is fine too, but this keeps deps minimal.)
-    # Use vips for blur for speed.
     gv = pyvips.Image.new_from_memory(g.astype(np.uint8).tobytes(), g.shape[1], g.shape[0], 1, "uchar")
-    gv_blur = gv.gaussblur(6)  # strong blur
-    gb = np.ndarray(
-        buffer=gv_blur.write_to_memory(),
-        dtype=np.uint8,
-        shape=(gv_blur.height, gv_blur.width),
-    ).astype(np.float32)
-
+    gv_blur = gv.gaussblur(6)
+    gb = np.frombuffer(gv_blur.write_to_memory(), dtype=np.uint8).reshape(gv_blur.height, gv_blur.width).astype(np.float32)
     std_blur = float(gb.std())
 
-    # simple edge energy proxy: Laplacian variance (approx)
-    # use finite differences on blurred image to avoid “noise looks edgy”
+    g_u8 = g.astype(np.uint8)
+    zlib_ratio, jpeg_q10_kb = compressibility_stats(g_u8)
+    sobel_mean, sobel_p95, coh = sobel_stats_from_gray_u8(g_u8)
+    pstd_med, pstd_iqr, pstd_max = patch_std_stats(g_u8, n=8)
+
     lap = (
         -4 * gb
         + np.roll(gb, 1, 0) + np.roll(gb, -1, 0)
@@ -68,32 +139,72 @@ def is_boring_jpg(path: Path,
     )
     lap_var = float(lap.var())
 
-    # Decision:
-    # - Very small JPEG is almost always garbage in your case
-    # - Or: flat (std_raw tiny)
-    # - Or: noise-like (std_blur tiny AND lap_var tiny)
-    boring = (
-        (size_kb <= size_kb_max) or
-        (std_raw <= std_raw_max) or
-        (std_blur <= std_blur_max and lap_var <= lap_var_max)
+    return dict(
+        size_kb=size_kb,
+        std_raw=std_raw,
+        std_blur=std_blur,
+        lap_var=lap_var,
+        sobel_mean=sobel_mean,
+        sobel_p95=sobel_p95,
+        coherence=coh,
+        zlib_ratio=zlib_ratio,
+        jpeg_q10_kb=jpeg_q10_kb,
+        patch_std_med=pstd_med,
+        patch_std_iqr=pstd_iqr,
+        patch_std_max=pstd_max,
     )
 
-    stats = dict(size_kb=size_kb, std_raw=std_raw, std_blur=std_blur, lap_var=lap_var)
-    return boring, stats
 
+def percentile(xs: list[float], p: float) -> float:
+    return float(np.percentile(np.asarray(xs, dtype=np.float64), p))
 
-def fmt_stats(st: dict) -> tuple[str, str, str, str]:
-    # rounded, aligned string fields
-    return (
-        f"{st['size_kb']:8.0f}",
-        f"{st['std_raw']:7.2f}",
-        f"{st['std_blur']:7.2f}",
-        f"{st['lap_var']:9.2f}",
+def median(xs: list[float]) -> float:
+    return float(np.median(np.asarray(xs, dtype=np.float64)))
+
+def decide_boring(
+    st: dict,
+    pop: dict,
+    hard_size_kb: float = 300.0,
+    hard_zlib: float = 0.10,
+) -> tuple[bool, str]:
+
+    # Hard degenerate
+    if st["size_kb"] < hard_size_kb:
+        return True, "tiny"
+
+    if st["zlib_ratio"] < hard_zlib:
+        return True, "ultra-compressible"
+
+    # Uniformly dead (catches 44/45)
+    if st["std_raw"] < pop["p10_std"] and st["patch_std_max"] < pop["p10_patch_std_max"]:
+        return True, "uniform-dead"
+
+    # Low-energy / smooth relative to the run (catches borderline like 37/39 when they’re bottom-quintile)
+    if (
+        st["jpeg_q10_kb"] < pop["p10_jq10"]
+        and st["std_raw"] < pop["p20_std"]
+        and st["patch_std_max"] < pop["p20_patch_std_max"]
+    ):
+        return True, "smooth-low-entropy"
+    
+    # Homogeneous junk: compressible + patch stats look the same everywhere
+    if (
+        st["jpeg_q10_kb"] < pop["p20_jq10"]
+        and st["patch_std_iqr"] < pop["p10_patch_std_iqr"]
+        and st["patch_std_max"] < pop["p20_patch_std_max"]
+    ):
+        return True, "homogeneous"
+
+    return False, ""
+
+def print_row(mark: str, slot: str, st: dict) -> None:
+    print(
+        f"{mark} {slot:>5}  "
+        f"{st['std_raw']:6.1f} {st['std_blur']:6.1f} "
+        f"{st['patch_std_max']:6.1f} {st['patch_std_iqr']:6.1f} "
+        f"{st['jpeg_q10_kb']:5.1f} "
+        f"{st['zlib_ratio']:5.3f}"
     )
-
-def print_row(tag: str, name: str, st: dict) -> None:
-    size_kb, std_raw, std_blur, lap_var = fmt_stats(st)
-    print(f"{tag:6}  {name:28}  {size_kb}  {std_raw}  {std_blur}  {lap_var}")
 
 
 
@@ -104,43 +215,57 @@ def main() -> None:
     ap.add_argument("--hot", action="store_true")
     ap.add_argument("--verbose", action="store_true")
 
-    # Tunables (start conservative; tighten after one run)
-    ap.add_argument("--size-kb-max", type=int, default=120)     # your “64KB vs 3MB” signal
-    ap.add_argument("--std-raw-max", type=float, default=2.0)   # flat/black
-    ap.add_argument("--std-blur-max", type=float, default=1.5)  # collapses after blur
-    ap.add_argument("--lap-var-max", type=float, default=8.0)   # low structure
-
     args = ap.parse_args()
 
     if args.verbose:
-        print(f"{'TAG':6}  {'FILE':28}  {'KB':>8}  {'STD':>7}  {'BLUR':>7}  {'LAP_VAR':>9}")
+        print("  SLOT   STD   BLUR  PSTDMX  PSTDIQ   JQ10  ZLIB")
 
     files = sorted(args.dir.glob(args.glob), key=lambda p: p.name)
     if not files:
         raise SystemExit("no files matched")
 
+    rows = [(p, compute_stats(p)) for p in files]
+    stds  = [st["std_raw"] for _, st in rows]
+    blurs = [st["std_blur"] for _, st in rows]
+    jq10  = [st["jpeg_q10_kb"] for _, st in rows]
+    pmax  = [st["patch_std_max"] for _, st in rows]
+    piqr = [st["patch_std_iqr"] for _, st in rows]
+
+    pop = dict(
+        # central tendency
+        med_std=median(stds),
+        med_blur=median(blurs),
+
+        # std thresholds
+        p10_std=percentile(stds, 10),
+        p20_std=percentile(stds, 20),
+
+        # patch max thresholds
+        p10_patch_std_max=percentile(pmax, 10),
+        p20_patch_std_max=percentile(pmax, 20),
+
+        # patch IQR thresholds
+        p10_patch_std_iqr=percentile(piqr, 10),
+
+        # compressibility thresholds
+        p10_jq10=percentile(jq10, 10),
+        p20_jq10=percentile(jq10, 20),
+    )
+
     n_del = 0
-    for p in files:
-        boring, st = is_boring_jpg(
-            p,
-            size_kb_max=args.size_kb_max,
-            std_raw_max=args.std_raw_max,
-            std_blur_max=args.std_blur_max,
-            lap_var_max=args.lap_var_max,
-        )
+    for p, st in rows:
+        boring, reason = decide_boring(st, pop)
+
+        mark = "X" if boring else " "
+        if args.verbose:
+            print_row(mark, slot_from_name(p), st)
+            if boring:
+                print(f"        reason={reason}")
 
         if boring:
             n_del += 1
-            if args.verbose:
-                print_row("BORING", p.name, st)
-            else:
-                print(f"BORING  {p.name}")
             if args.hot:
                 p.unlink()
-        else:
-            if args.verbose:
-                print_row("INTRST", p.name, st)
-
 
     print(f"{'DRY ' if not args.hot else ''}deleted {n_del} / {len(files)}")
 

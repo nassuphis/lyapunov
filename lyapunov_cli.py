@@ -304,6 +304,16 @@ def main() -> None:
         action="store_true",
         help="Dry run.",
     )
+    p.add_argument(
+        "--macro-only",
+        action="store_true",
+        help="Only apply macro.",
+    )
+    p.add_argument(
+        "--specs-only",
+        action="store_true",
+        help="Only apply macro.",
+    )
     
 
     args = p.parse_args()
@@ -320,6 +330,17 @@ def main() -> None:
             k = "@" + k
         expander.MACROS[k] = v
 
+    if args.macro_only:
+        print(expander.macro(args.spec))
+        return
+    
+    # Expand the main spec chain
+    # specs = expandspec.expand_cartesian_lists(args.spec)
+    specs = expander.expand(expander.macro(args.spec))
+
+    if args.show_specs or args.specs_only: 
+        for s in specs: print(s)
+        if args.specs_only: return
 
     out_schema = Path(args.out)
     outdir = out_schema.resolve().parent
@@ -331,13 +352,9 @@ def main() -> None:
     print(f"will save to {outdir} as {stem}_NNNNN{suffix}")
     outdir.mkdir(parents=True, exist_ok=True)
 
-    # Expand the main spec chain
-    # specs = expandspec.expand_cartesian_lists(args.spec)
-    specs = expander.expand(expander.macro(args.spec))
+   
     
-    if args.show_specs:
-        for s in specs:
-            print(s)
+    
 
     if not specs:
         raise SystemExit("Spec expansion produced no tiles")
@@ -383,9 +400,10 @@ def main() -> None:
         print(f"autoleveled: {out_path} (deleted {tmp_path})")
 
     # Save the macro state used for this run
-    used_macros_path = outdir / "used_macros.txt"
-    write_used_macros(used_macros_path, run_spec=args.spec)
-    print(f"wrote: {used_macros_path}")
+    #if not args.dry:
+    #    used_macros_path = outdir / "used_macros.txt"
+    #    write_used_macros(used_macros_path, run_spec=args.spec)
+    #    print(f"wrote: {used_macros_path}")
 
 
 if __name__ == "__main__":

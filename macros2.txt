@@ -1,0 +1,48 @@
+# 2025-12-17 19:44:25 +0200
+@RUN=@LYAP0
+@LYAP0=slot:{1:@SLOTS0},@MAP14,@M0,@RGB0,@HIST0
+# number of samples
+@SLOTS0=100
+# map selection
+@MAP14=map:nn14:AB:-20:-20:20:20
+# colorization
+@RGB0=rgb:pfm:@PAL0:1.2:@S0
+@S0=s1=#{rfloat3(0.1,1.0)}:s2=#{rfloat3(0.1,1.0)}:s3=#{rfloat3(0.1,1.0)}:se=1.0
+@PAL0=#{r2line("tri_warm.txt","tri_cool.txt")}
+@HIST0=hist:6:6:512
+#
+# the "m" entry for the NN14 map
+#
+@M0=m:@AVG0(@MPOLY0(@ORD0,@MPAR0,@MPAR0,@MFUN0),cos(l),x,1/2)
+@AVG0=#{choose("cwavg","cwavgt")}
+@MPOLY0=#{choose("meixpol","jacobi")}
+@ORD0=#{choose("1","2","3","4","5","6","7")}
+#
+# the parameter
+#
+@MPAR0=#{choose(@PAR0,@PAR1,@PAR2,@PAR3)}
+@PAR3= @SELVAR1+"*("+str(@PAR0)+")+"+@SELVAR1+"*("+str(@PAR0)+")"
+@PAR0=rfloat3(-1.5,+1.5)
+@PAR1=@SELVAR1
+@PAR2=rline("fun.txt")
+#
+# the function
+#
+@MFUN0=#{choose(@MFUN1,@MFUN2,@MFUN3,@MFUN4)}
+# fun group 1
+@MFUN1=@SELFUN0+@SELVAR0
+# fun group 2
+@MFUN2=@SELFUN0+@SELVAR0+"*"+@SELFUN0+@SELVAR0
+# fun group 3
+@MFUN3=@SELFUN0+@SELVAR0+"*exp("+@SELFUN0+@SELVAR0+"+1j*"+@SELFUN0+@SELVAR0+")"
+# fun group 4
+@MFUN4=@SELFUN0+@SELVAR0+"+"+@SELFUN0+@SELVAR0
+# function selection macros
+@SELFUN0=choose(@FUNS1,@FUNS2,@FUNS3)
+@FUNS1="i","cos","j0","j1","i0"
+@FUNS2="i1","aira","airb","fres","frec"
+@FUNS3="lgamma","si","ci","ei","exp","lambertw"
+@SELVAR0="("+@SELVAR1+")"
+@SELVAR1= choose("r","x","l")
+
+

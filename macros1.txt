@@ -1,0 +1,23 @@
+# 2025-12-17 19:44:25 +0200
+@RUN=@LYAP1
+@LYAP1=slot:{1:@SLOTS1},@MAP14,@M1,@RGB1,@HIST1
+@MAP14=map:nn14:AB:-20:-20:20:20
+# the function
+@M1=m:@AVG1(@MPOLY1(@ORD1,@MPAR1,@MPAR1,@MFUN1*@MFUN2),cos(l),x,1/2)
+@AVG1=#{choose("cwavg","cwavgt")}
+@MPOLY1=#{choose("meixpol","jacobi")}
+# fungroup 1
+@MFUN1=@SFUN1(#{rline("fun.txt")})
+# fun group 2
+@MFUN2=exp(@SFUN1(x)+1j*@SFUN1(l))
+# select functions
+@SFUN1=#{choose("i","cos","j0","j1","i0","i1","aira","airb","fres","frec","lgamma","si","ci","ei","exp","lambertw")}
+# parameters
+@MPAR1=#{rfloat3(-1.5,+1.5)}
+# order
+@ORD1=#{choose("1","2","3","4","5","6","7")}
+@RGB1=rgb:pfm:@PAL1:1.2:@S1
+@S1=s1=#{rfloat3(0.1,1.0)}:s2=#{rfloat3(0.1,1.0)}:s3=#{rfloat3(0.1,1.0)}:se=1.0
+@PAL1=#{r2line("tri_warm.txt","tri_cool.txt")}
+@HIST1=hist:6:6:512
+@SLOTS1=100
