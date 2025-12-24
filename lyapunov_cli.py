@@ -314,6 +314,11 @@ def main() -> None:
         action="store_true",
         help="Only apply macro.",
     )
+    p.add_argument(
+        "--no-auto",
+        action="store_true",
+        help="No auto-levels.",
+    )
     
 
     args = p.parse_args()
@@ -391,13 +396,19 @@ def main() -> None:
         )
         print(f"saved: {tmp_path}")
 
-        subprocess.run(
-            ["bash", "autolevels.sh", str(tmp_path), str(out_path)],
-            check=True,
-        )
+        if args.no_auto:
+            tmp_path.replace(out_path) 
+            print(f"moved to: {out_path} (deleted {tmp_path})")
+        else:
+            subprocess.run(
+                ["bash", "autolevels.sh", str(tmp_path), str(out_path)],
+                check=True,
+            )
+            print(f"autoleveled: {out_path} (deleted {tmp_path})")
+            tmp_path.unlink()
 
-        tmp_path.unlink()
-        print(f"autoleveled: {out_path} (deleted {tmp_path})")
+        
+       
 
     # Save the macro state used for this run
     #if not args.dry:

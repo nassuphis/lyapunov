@@ -1,0 +1,81 @@
+# ----------------------------------------------------------
+#
+# randomized NN14 map generator
+#
+# ----------------------------------------------------------
+@RUN=@LYAP0
+@LYAP0=slot:{1:@SLOTS0},@MAP14,@M0,@RGB0,@HIST0
+# ----------------------------------------------------------
+# number of samples
+@SLOTS0=10
+# ----------------------------------------------------------
+# map selection
+@MAP14=map:nn14:AB:-40:-40:40:40
+# ----------------------------------------------------------
+# colorization uses the "palette field" decomposition
+# based on frequency ratios
+# colorization input is function of histogram of map orbit
+@RGB0=rgb:pfm:@PAL0:1.2:@S0
+@S0=s1=#{rfloat3(0.1,1.0)}:s2=#{rfloat3(0.1,1.0)}:s3=#{rfloat3(0.1,1.0)}:se=1.0
+@PAL0=#{r2line("tri_warm.txt","tri_cool.txt")}
+@HIST0=hist:6:6:512
+# ----------------------------------------------------------
+# the "m" entry for the NN14 map contains 5 elements
+# averaging method
+# the LHS of the average is a some special function that has order, parameters, value
+# the oder of the special function is a number 1-7
+# the parameters are some random functions or constants
+# the function is a random combi of functions of r,x and l
+#
+# each component has to be a string.
+# strings are generated inside #{...} the render-time tag
+#
+@M0=m:#{f"{@PROD0}*{@EXP0}"}
+
+# ----------------------------------------------------------
+#
+# the product function selection
+#
+@PROD0=f"{@NCALL0}*{@NCALL0}*{@NCALL0}*{@NCALL0}"
+# ----------------------------------------------------------
+#
+# the exponent function selection
+#
+@EXP0=f"exp({@REAL0}+1j*{@IMAG0})"
+@REAL0=choose(@REAL1)
+@REAL1="aira(x)","airb(x)","fres(x)","frec(x)"
+@IMAG0=choose(@IMAG1)
+@IMAG1="aira(l)","airb(l)","fres(l)","frec(l)"
+
+
+# ----------------------------------------------------------
+#
+# ranfom nested function call
+#
+@NCALL0=f"{@NFUN0}({@FCALL0})"
+@NFUN0=choose(@NFUN1,@NFUN2,@NFUN3,@NFUN4,@NFUN5)
+@NFUN1="j0","j1","i0","i1"
+@NFUN2="cos","sin"
+@NFUN3="cht1","cht2","cht3","cht4"
+@NFUN4="chu1","chu2","chu3","chu4"
+@NFUN5="sbs1","sbs2","sbs3","sbs4"
+
+# ----------------------------------------------------------
+#
+# make random function call
+#
+@FCALL0=choose(@FUNS1,@FUNS2,@FUNS3,@FUNS4,@FUNS5,@FUNS6,@FUNS7,@FUNS8)
+@FUNS1=f"{@SELVAR0}"
+@FUNS2=f"cos({@SELVAR0})"
+@FUNS3=f"j0({@SELVAR0})",f"j1({@SELVAR0})",f"i0({@SELVAR0})",f"i1({@SELVAR0})"
+@FUNS4=f"complex(aira(np.real({@SELVAR0})),0.0)",f"complex(airb(np.real({@SELVAR0})),0.0)"
+@FUNS5=f"fres(np.real({@SELVAR0}))",f"frec(np.real({@SELVAR0}))"
+@FUNS6=f"complex(lgamma(np.real({@SELVAR0})),0.0)"
+@FUNS7=f"complex(si(np.real({@SELVAR0})),0.0)",f"complex(ci(np.real({@SELVAR0})),0.0)",f"complex(ei(np.real({@SELVAR0})),0.0)"
+@FUNS8=f"exp({@SELVAR0})",f"lambertw({@SELVAR0})"
+@SELVAR0=choose("r","x","l")
+# ----------------------------------------------------------
+# integer order
+@ORD0=choose("1","2","3","4","5","6","7")
+
+

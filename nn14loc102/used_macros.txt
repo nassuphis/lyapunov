@@ -1,0 +1,70 @@
+# ----------------------------------------------------------
+#
+# loc101 NN14 map generator 
+#
+# ----------------------------------------------------------
+@RUN=@LYAP0
+@LYAP0=slot:{1:@SLOTS0},@MAP14,@M0,@RGB0,@HIST0
+# ----------------------------------------------------------
+# number of samples
+@SLOTS0=10
+# ----------------------------------------------------------
+# map selection
+@MAP14=map:nn14:AB:-40:-40:40:40
+# ----------------------------------------------------------
+# colorization uses the "palette field" decomposition
+# based on frequency ratios
+# colorization input is function of histogram of map orbit
+@RGB0=rgb:pfm:@PAL0:1.2:@S0
+@S0=s1=#{rfloat3(0.1,1.0)}:s2=#{rfloat3(0.1,1.0)}:s3=#{rfloat3(0.1,1.0)}:se=1.0
+@PAL0=#{r2line("tri_warm.txt","tri_cool.txt")}
+@HIST0=hist:6:6:512
+# ----------------------------------------------------------
+# the "m" entry for the NN14 
+# strings are generated inside #{...} the render-time tag
+#
+@M0=m:#{f"{@PROD0}*{@EXP0}"}
+
+# ----------------------------------------------------------
+#
+# the product function selection
+#
+@PROD0=f"{@NCALL0}*{@NCALL0}*{@NCALL0}*{@NCALL0}"
+# ----------------------------------------------------------
+#
+# the exponent function selection
+#
+@EXP0=f"exp({@REAL0}+1j*{@IMAG0})"
+@REAL0=choose(@REAL1,@REAL2)
+@REAL1="aira(x)","airb(x)","fres(x)","frec(x)"
+@REAL2="mexhat(0.5,x)","morlet(0.5,0.5,x)","morlet(0.5+abs(cos(l)),0.5,x)"
+@IMAG0=choose(@IMAG1,@IMAG2,@IMAG3)
+@IMAG1="aira(l)","airb(l)","fres(l)","frec(l)"
+@IMAG2="mexhat(0.5,l)","morlet(0.5,0.5,l)"
+@IMAG3="mexhat(abs(cos(x))+0.25,l)","morlet(abs(sin(x))+0.25,abs(cos(r))+0.25,l)"
+
+
+# ----------------------------------------------------------
+#
+# ranfom nested function call
+#
+@NCALL0=f"{@NFUN0}({@CALL0})"
+@NFUN0=choose(@NFUN1)
+@NFUN1="j0s","j1s","i0s","i1s"
+
+
+# ----------------------------------------------------------
+#
+# make random function call
+#
+@CALL0=choose(@FUNS1,@FUNS2)
+@FUNS1=f"cos({@SELVAR0})",f"sin({@SELVAR0})"
+@FUNS2=f"si({@SELVAR0})",f"ci({@SELVAR0})",f"ei({@SELVAR0})"
+@SELVAR0=choose(@SELVAR1,@SELVAR2)
+@SELVAR1="l","l*l","l*l-l","l**3-l**2+l","l**3+l**2-l","l**4-l**3+l**2-l","l**5-l**4+l**3-l**2+l"
+@SELVAR2="x*x-l*l","l*x+l+x","x**5+l**5-x**4-l**4+x**3+l**3","(x+l)*(x-l)*(x*x-l*l)*(x*x+l*l)"
+# ----------------------------------------------------------
+# integer order
+@ORD0=choose("1","2","3","4","5","6","7")
+
+
