@@ -36,13 +36,17 @@ import argparse
 import numpy as np
 import subprocess
 
-from specparser import specparser, expander
+from specparser import specparser
+from specparser import expander
 from rasterizer import raster
+
 
 import maps
 import fields
 import affine
 import field_color
+
+
 
 # ---------------------------------------------------------------------------
 # Spec helpers using specparser.split_chain
@@ -351,15 +355,10 @@ def main() -> None:
     outdir = out_schema.resolve().parent
     stem = out_schema.stem
     suffix = out_schema.suffix or ".jpg"
-    if not suffix.startswith("."):
-        suffix = "." + suffix
+    if not suffix.startswith("."): suffix = "." + suffix
 
     print(f"will save to {outdir} as {stem}_NNNNN{suffix}")
     outdir.mkdir(parents=True, exist_ok=True)
-
-   
-    
-    
 
     if not specs:
         raise SystemExit("Spec expansion produced no tiles")
@@ -367,18 +366,16 @@ def main() -> None:
     for i, spec in enumerate(specs, start=1):
         sid = specparser.slot_suffix(spec, width=5)
         out_path = outdir / f"{stem}_{sid}{suffix}"
-        tmp_path = outdir / f"{stem}_{sid}__tmp{suffix}"
-    
+       
         if out_path.exists() and not args.overwrite:
             print(f"{out_path} exists, skipping")
             continue
 
         print(f"{i}/{len(specs)} Rendering {spec}")
+        
+        if args.dry: continue
+
         t0 = time.perf_counter()
-
-        if args.dry:
-            continue
-
         rgb = spec2lyapunov(spec, pix=args.pix)
         print(f"field time: {time.perf_counter() - t0:.3f}s")
 
@@ -386,26 +383,21 @@ def main() -> None:
 
         raster.save_jpg_rgb(
             rgb,
-            out_path=str(tmp_path),
-            invert=False,
+            out_path=str(out_path),
             footer_text=spec,
             footer_pad_lr_px=48,
             footer_dpi=300,
             spec=spec,
-            keep_metadata=True,
+            autolvl=(not args.no_auto),
         )
-        print(f"saved: {tmp_path}")
+        print(f"saved: {out_path}")
 
-        if args.no_auto:
-            tmp_path.replace(out_path) 
-            print(f"moved to: {out_path} (deleted {tmp_path})")
-        else:
-            subprocess.run(
-                ["bash", "autolevels.sh", str(tmp_path), str(out_path)],
-                check=True,
-            )
-            print(f"autoleveled: {out_path} (deleted {tmp_path})")
-            tmp_path.unlink()
+        #    subprocess.run(
+        #        ["bash", "autolevels.sh", str(tmp_path), str(out_path)],
+        #        check=True,
+        #    )
+        #    print(f"autoleveled: {out_path} (deleted {tmp_path})")
+        #    tmp_path.unlink()
 
         
        

@@ -32,7 +32,7 @@ _C = types.complex128
 # Tiny Numba helpers used inside map expressions
 # ---------------------------------------------------------------------------
 
-@njit(types.float64(types.float64), cache=True, fastmath=False)
+@njit
 def i(x):
     return x
 
@@ -206,7 +206,11 @@ def j0s(x):
             np.cos(xx)*(1 - y*(0.001098628627 - y*0.000002073)) -
             np.sin(xx)*(0.01562499997 - y*(0.000143048876 - y*0.000000243))
         )
-    
+
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def j0s_c(x): return complex(j0s(np.real(x)),0.0)
+
+
 # Bessel, order 1
 @njit(cache=True, fastmath=True)
 def j1s(x):
@@ -240,6 +244,9 @@ def j1s(x):
     val = np.sqrt(2.0 / (np.pi * t)) * (c * P - s * Q)
     return -val if x < 0.0 else val  # J1 is odd
 
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def j1s_c(x): return complex(j1s(np.real(x)),0.0)
+
 # Modified Bessel, order 0  
 @njit(cache=True, fastmath=True)
 def i0s(x):
@@ -248,11 +255,7 @@ def i0s(x):
     # I0(x) = 1 + x^2/4 + x^4/64 + x^6/2304 + x^8/147456 + ...
     if ax < 6.0:
         y = x * x
-        return (1.0
-                + y * (0.25
-                + y * (0.015625
-                + y * (0.00043402777777777775
-                + y * (6.781684027777778e-06)))))
+        return (1.0 + y * (0.25 + y * (0.015625 + y * (0.00043402777777777775 + y * (6.781684027777778e-06)))))
 
     # I0(x) ~ exp(ax)/sqrt(2*pi*ax) * (1 + 1/(8ax) + 9/(128 ax^2) + ...)
     t = ax
@@ -260,6 +263,9 @@ def i0s(x):
     inv2 = inv * inv
     poly = 1.0 + (1.0/8.0)*inv + (9.0/128.0)*inv2
     return np.exp(t) * poly / np.sqrt(2.0 * np.pi * t)
+
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def i0s_c(x): return complex(i0s(np.real(x)),0.0)
 
 # Modified Bessel, order 1
 @njit(cache=True, fastmath=True)
@@ -269,9 +275,9 @@ def i1s(x):
     # I1(x) = x/2 + x^3/16 + x^5/384 + x^7/18432 + x^9/1474560 + ...
     if ax < 6.0:
         y = x * x
-        return x * (0.5 + y * (0.0625 + y * (0.0026041666666666665
-                     + y * (5.425347222222222e-05
-                     + y * (6.781684027777778e-07)))))
+        return x * (
+            0.5 + y * (0.0625 + y * (0.0026041666666666665 + y * (5.425347222222222e-05 + y * (6.781684027777778e-07))))
+        )
 
     # I1(x) ~ exp(ax)/sqrt(2*pi*ax) * (1 - 3/(8ax) + 15/(128 ax^2) + ...)
     t = ax
@@ -280,6 +286,9 @@ def i1s(x):
     poly = 1.0 - (3.0/8.0)*inv + (15.0/128.0)*inv2
     val = np.exp(t) * poly / np.sqrt(2.0 * np.pi * t)
     return -val if x < 0.0 else val  # I1 is odd
+
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def i1s_c(x): return complex(i1s(np.real(x)),0.0)
 
 DEFAULT_BESSEL_N = 20
 
@@ -415,6 +424,9 @@ def airy_ai(x):
         return _airy_series(x, AI0, AI0P)
 
 
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def airy_ai_c(x): return complex(airy_ai(np.real(x)),0.0)
+
 @njit(types.float64(types.float64), fastmath=True, cache=True)
 def airy_bi(x):
     """
@@ -438,6 +450,9 @@ def airy_bi(x):
     else:
         return _airy_series(x, BI0, BI0P)
     
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def airy_bi_c(x): return complex(airy_bi(np.real(x)),0.0)
+
 
 @njit(types.float64(types.float64), fastmath=True, cache=True)
 def fresnel_c(x):
@@ -502,6 +517,9 @@ def fresnel_c(x):
 
     return sign * result
 
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def fresnel_c_c(x): return complex(fresnel_c(np.real(x)),0.0)
+
 
 @njit(types.float64(types.float64), fastmath=True, cache=True)
 def fresnel_s(x):
@@ -558,6 +576,8 @@ def fresnel_s(x):
 
     return sign * result
 
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def fresnel_s_c(x): return complex(fresnel_s(np.real(x)),0.0)
 
 
 
@@ -623,6 +643,9 @@ def lambertw(x):
         w = w - f / denom
     return w
 
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def lambertw_c(x): return complex(lambertw(np.real(x)),0.0)
+
 @njit(types.float64(types.float64, types.float64), fastmath=True, cache=True)
 def gammainc(a, x):
     """
@@ -672,6 +695,9 @@ def gammainc(a, x):
     Q = math.exp(-x + a * math.log(x) - gln) * h
     P = 1.0 - Q
     return P
+
+@njit(types.complex128(types.complex128,types.complex128), fastmath=True, cache=True)
+def gammainc_c(a,x): return complex(gammainc(np.real(a),np.real(x)),0.0)
 
 SQRT_PI = math.sqrt(math.pi)
 
@@ -792,6 +818,9 @@ def ei(x):
     return math.exp(x) * invx * poly
 
 
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def ei_c(x): return complex(ei(np.real(x)),0.0)
+
 # ============================================================
 # 2. Sine integral Si(x) and Cosine integral Ci(x)
 # ============================================================
@@ -872,6 +901,9 @@ def si(x):
     result = 0.5 * PI - cx * A - sx * B
     return sign * result
 
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def si_c(x): return complex(si(np.real(x)),0.0)
+
 
 @njit(types.float64(types.float64), fastmath=True, cache=True)
 def ci(x):
@@ -944,6 +976,9 @@ def ci(x):
     cx = math.cos(x)
 
     return sx * A + cx * B
+
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def ci_c(x): return complex(ci(np.real(x)),0.0)
 
 
 # ============================================================
@@ -1421,6 +1456,8 @@ def sinhc(z):
 def sech(z):
     return 1.0 / np.cosh(z)
 
+@njit(types.complex128(types.complex128), fastmath=True, cache=True)
+def lgamma_c(x): return complex(math.lgamma(np.real(x)),0.0)
 
 NS = {
     "i": i,
@@ -1459,26 +1496,26 @@ NS = {
     "f2i": f2i,
     "abs_cap": abs_cap,
     "norm": norm,
-    "j0s": j0s,
-    "j1s": j0s,
-    "i0s": i0s,
-    "i1s": i1s,
+    "j0s": j0s_c,
+    "j1s": j0s_c,
+    "i0s": i0s_c,
+    "i1s": i1s_c,
     "j0": j0,
     "j1": j1,
     "i0": i0,
     "i1": i1,
-    "lgamma": math.lgamma,
-    "aira": airy_ai,
-    "airb": airy_bi,
-    "frec": fresnel_c,
-    "fres": fresnel_s,
+    "lgamma": lgamma_c,
+    "aira": airy_ai_c,
+    "airb": airy_bi_c,
+    "frec": fresnel_c_c,
+    "fres": fresnel_s_c,
     "zeta": zeta,
-    "lambertw": lambertw,
+    "lambertw": lambertw_c,
     "gammainc": gammainc,
     "dawson": dawson,
-    "ei": ei,
-    "si": si,
-    "ci": ci,
+    "ei": ei_c,
+    "si": si_c,
+    "ci": ci_c,
     "gd": gd,
     "clausen": clausen,
     "li2": li2,
