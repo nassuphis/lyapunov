@@ -1459,6 +1459,11 @@ def sech(z):
 @njit(types.complex128(types.complex128), fastmath=True, cache=True)
 def lgamma_c(x): return complex(math.lgamma(np.real(x)),0.0)
 
+
+@njit(fastmath=True, cache=True)
+def complex(re, im) -> np.complex128:
+    return np.real(re)+1j*np.imag(im)
+
 NS = {
     "i": i,
     "step": step,
@@ -1561,6 +1566,7 @@ NS = {
     "shannon": wavelet.shannon,
     "gdev": wavelet.gauss_deriv,
     "gdevs": wavelet.gauss_deriv_scaled,
+    "complex": complex,
     "np": np,
     "math": math,
     "cmath": cmath,

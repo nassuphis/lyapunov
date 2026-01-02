@@ -9,7 +9,7 @@ sys.path.insert(0, str(parent))
 import argparse
 from pathlib import Path
 
-from rasterizer.raster import read_spec_exiftool
+from rasterizer import image2spec 
 
 
 def main() -> None:
@@ -35,9 +35,15 @@ def main() -> None:
     lines: list[str] = []
     print(f"Processing {len(files)} files.")
     for i,p in enumerate(files,start=1):
-        spec = read_spec_exiftool(str(p)).strip()
+        spec = image2spec.read_spec_exiftool(str(p)).strip()
         if not spec:
             spec = "nospec"
+        else:
+            # per-image sidecar: imagename.jpg -> imagename.spec (same directory)
+            sidecar = p.with_suffix(".spec")
+            if not sidecar.exists():
+                sidecar.write_text(spec + "\n", encoding="utf-8")
+
 
         if args.include_filename:
             lines.append(f"{p.name}\t{spec}")

@@ -285,9 +285,15 @@ def main() -> None:
         help="Tile width/height in pixels (Lyapunov grid resolution).",
     )
     p.add_argument(
+        "--pooled-rgb",
+        type=int,
+        default=10,
+        help="Pooled rgb autilevels.",
+    )
+    p.add_argument(
         "--out",
         type=str,
-        default="lyapunov.jpg",
+        default="lyapunov/lyapunov.jpg",
         help="Output JPG path (can itself be an expandspec template).",
     )
     p.add_argument(
@@ -327,6 +333,7 @@ def main() -> None:
 
     args = p.parse_args()
 
+    raster.autolvlcfg.pooled_rgb=args.pooled_rgb
     expander.macro_init(args.macro)
 
     # Apply macro overrides/additions
@@ -343,19 +350,23 @@ def main() -> None:
         print(expander.macro(args.spec))
         return
     
-    # Expand the main spec chain
-    # specs = expandspec.expand_cartesian_lists(args.spec)
-    specs = expander.expand(expander.macro(args.spec))
-
-    if args.show_specs or args.specs_only: 
-        for s in specs: print(s)
-        if args.specs_only: return
-
+    # result location
     out_schema = Path(args.out)
     outdir = out_schema.resolve().parent
     stem = out_schema.stem
     suffix = out_schema.suffix or ".jpg"
     if not suffix.startswith("."): suffix = "." + suffix
+    expander.DICT["outdir"]=outdir
+    expander.DICT["outstem"]=stem
+    expander.DICT["outsuffix"] = suffix
+    expander.DICT["outschema"] = outdir / stem
+
+    # Expand the main spec chain
+    specs = expander.expand(expander.macro(args.spec))
+
+    if args.show_specs or args.specs_only: 
+        for s in specs: print(s)
+        if args.specs_only: return
 
     print(f"will save to {outdir} as {stem}_NNNNN{suffix}")
     outdir.mkdir(parents=True, exist_ok=True)
@@ -366,6 +377,7 @@ def main() -> None:
     for i, spec in enumerate(specs, start=1):
         sid = specparser.slot_suffix(spec, width=5)
         out_path = outdir / f"{stem}_{sid}{suffix}"
+        spec_path = out_path.with_suffix(".spec")
        
         if out_path.exists() and not args.overwrite:
             print(f"{out_path} exists, skipping")
@@ -390,6 +402,7 @@ def main() -> None:
             spec=spec,
             autolvl=(not args.no_auto),
         )
+        spec_path.write_text(spec + "\n", encoding="utf-8")
         print(f"saved: {out_path}")
 
         #    subprocess.run(

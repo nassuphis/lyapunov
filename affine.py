@@ -3,10 +3,10 @@ import sys
 from pathlib import Path
 parent = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(parent))
+
 import numpy as np
-
-from specparser import specparser, expandspec
-
+import math
+from specparser import specparser, expander
 import maps
 
 # ---------------------------------------------------------------------------
@@ -78,6 +78,66 @@ def _get_corner(d: dict, key: str, default_x: float, default_y: float):
 
     return float(x), float(y)
 
+
+def _get_turns(d: dict, key: str = "rot", default: float = 0.0) -> float:
+    """
+    Parse rot as "number of turns".
+      rot:t            (t turns)
+      rot              (no args -> default)
+    """
+    vals = d.get(key)
+    if not vals:
+        return float(default)
+    if len(vals) < 1:
+        return float(default)
+    try:
+        return float(_eval_number(vals[0]).real)
+    except Exception:
+        return float(default)
+
+
+def _rotate_point_xy(x: float, y: float, cx: float, cy: float, c: float, s: float):
+    dx = x - cx
+    dy = y - cy
+    xr = cx + c * dx - s * dy
+    yr = cy + s * dx + c * dy
+    return float(xr), float(yr)
+
+
+def apply_rot_to_affine_domain(
+    domain_affine: np.ndarray,
+    turns: float,
+    *,
+    pivot: tuple[float, float] | None = None,
+) -> np.ndarray:
+    """
+    Rotate the affine domain (LL, UL, LR) by `turns` around a pivot.
+
+    - turns is "number of turns": 1.0 = 360°, 0.25 = 90°, 0.125 = 45°.
+    - default pivot is the parallelogram center: C = 0.5*(UL + LR),
+      which is valid for rectangles and general parallelograms.
+    """
+    if turns == 0.0:
+        return domain_affine
+
+    llx, lly, ulx, uly, lrx, lry = map(float, domain_affine.tolist())
+
+    if pivot is None:
+        cx = 0.5 * (ulx + lrx)
+        cy = 0.5 * (uly + lry)
+    else:
+        cx, cy = float(pivot[0]), float(pivot[1])
+
+    theta = 2.0 * math.pi * float(turns)
+    c = math.cos(theta)
+    s = math.sin(theta)
+
+    llx, lly = _rotate_point_xy(llx, lly, cx, cy, c, s)
+    ulx, uly = _rotate_point_xy(ulx, uly, cx, cy, c, s)
+    lrx, lry = _rotate_point_xy(lrx, lry, cx, cy, c, s)
+
+    out = np.asarray([llx, lly, ulx, uly, lrx, lry], dtype=np.float64)
+    return out
 
 def build_affine_domain(
     specdict: dict,
@@ -151,6 +211,11 @@ def build_affine_domain(
     area = abs(vx0 * vy1 - vx1 * vy0)
     if area == 0.0:
         print("WARNING: affine domain is degenerate (LL, UL, LR colinear)")
+
+    # 4) optional rotation (turns): rot:0.125 == 45 degrees
+    turns = _get_turns(specdict, "rot", 0.0)
+    if turns != 0.0:
+        domain_affine = apply_rot_to_affine_domain(domain_affine, turns)
 
     return domain_affine
 
