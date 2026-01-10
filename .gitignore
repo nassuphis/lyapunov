@@ -1,11 +1,17 @@
 # stuff 
 gemini_key.txt
+
+# dzi
+*.dzi
+*_files/
+
 # images
 *.png
 *.jpg
 *.mp4
 *.jpeg
 *.tiff
+*.v
 
 # Rnw stuff
 *.tex
