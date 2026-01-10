@@ -49,7 +49,7 @@ The spec string consists of comma-separated items.
 Each item name appears once and is followed by one or more colon-separated values. The final output must contain no spaces and must be exactly one line.
 The slot item has the form slot:<integer> and has exactly one value. The value is a non-negative integer (e.g. slot:1, slot:81).
 The map item has at least six values, for example map:nn14:AB:-40:-40:40:40. The first value is the map name, the second is the forcing pattern, 
-and the remaining values define the numeric range. Preserve order exactly.
+and the remaining values define the numeric range. Preserve order exactly. the map name is amlost always nn14. so keep it like that.
 The m item defines the map formula and has the form m:<expression>. 
 The expression is a syntactically valid Python expression returning a single scalar. Allowed variables are x, r, and l only. 
 Parentheses must match. Allowed operators are +, -, *, and ** only. No implicit multiplication is allowed. Polynomials may appear, for example: l*l*l*l-l*l*l+l*l-l, l**4-l**3, or x*x-l*l.

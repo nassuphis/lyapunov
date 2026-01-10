@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DeepZoom Viewer</title>
+
+  <!-- OpenSeadragon -->
+  <script src="https://cdn.jsdelivr.net/npm/openseadragon@4.1/build/openseadragon/openseadragon.min.js"></script>
+
+  <style>
+    html, body { width: 100%; height: 100%; margin: 0; background: #111; }
+    #viewer { width: 100vw; height: 100vh; background: #111; }
+
+    /* HUD (bottom-left) */
+    #hud {
+      position: fixed;
+      left: 12px;
+      bottom: 12px;
+      max-width: calc(100vw - 24px);
+      padding: 10px 12px;
+      border-radius: 8px;
+      font: 13px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      background: rgba(0,0,0,0.65);
+      color: #ddd;
+      white-space: pre-wrap;
+      z-index: 10000;
+      pointer-events: auto; /* must be clickable for the download link */
+    }
+    #hud a {
+      color: #9fd;
+      text-decoration: underline;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="viewer"></div>
+
+  <div id="hud">
+    <div id="hudText">Loading…</div>
+    <a id="hudLink" href="#" target="_blank" rel="noopener noreferrer" style="display:none;">download</a>
+  </div>
+
+  <script>
+    (function () {
+      const hudTextEl = document.getElementById("hudText");
+      const hudLinkEl = document.getElementById("hudLink");
+
+      const logHud = (text) => { hudTextEl.textContent = text; };
+
+      // -----------------------------
+      // CONFIG
+      // -----------------------------
+
+      // Where the DZI lives (relative to this viewer.html)
+      const DZI = "gemini.dzi";
+
+      // Manifest lives alongside viewer.html (same origin). See previous manifest generator.
+      const MANIFEST_URL = "gemini_manifest.json";
+
+      // Base HTTP URL for original source images (different bucket/prefix).
+      // Change to your CloudFront domain if you have one.
+      //
+      // If your original files are at s3://polyvec/gemini/g00036.jpeg then an HTTP URL is typically:
+      //   https://polyvec.s3.amazonaws.com/gemini/g00036.jpeg
+      // OR the S3 website endpoint:
+      //   http://polyvec.s3-website-us-east-1.amazonaws.com/gemini/g00036.jpeg
+      //
+      const ORIG_BASE = "https://polyvec.s3.amazonaws.com/";
+
+      // -----------------------------
+      // GUARDS
+      // -----------------------------
+      if (typeof OpenSeadragon !== "function") {
+        logHud("ERROR: OpenSeadragon did not load (typeof OpenSeadragon !== 'function').");
+        return;
+      }
+
+      // -----------------------------
+      // VIEWER
+      // -----------------------------
+      const viewer = OpenSeadragon({
+        id: "viewer",
+        tileSources: DZI,
+        prefixUrl: "https://cdn.jsdelivr.net/npm/openseadragon@4.1/build/openseadragon/images/",
+        showNavigator: true,
+        navigatorPosition: "BOTTOM_RIGHT",
+        visibilityRatio: 1.0,
+        minZoomLevel: 0.5,
+        defaultZoomLevel: 0,
+        maxZoomPixelRatio: 4,
+        gestureSettingsMouse: { scrollToZoom: true }
+      });
+
+      let manifest = null;
+      let item = null;
+      let contentSize = null;
+
+      function hideLink() {
+        hudLinkEl.style.display = "none";
+        hudLinkEl.href = "#";
+      }
+
+      function showLink(url) {
+        hudLinkEl.href = url;
+        hudLinkEl.style.display = "inline";
+      }
+
+      function origUrlFor(filePath) {
+        const base = ORIG_BASE.replace(/\/+$/, "") + "/";
+        const key  = String(filePath || "").replace(/^\/+/, "");
+        return base + key;
+      }
+
+      async function loadManifest() {
+        try {
+          const r = await fetch(MANIFEST_URL, { cache: "no-store" });
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          manifest = await r.json();
+        } catch (e) {
+          manifest = null;
+        }
+      }
+
+      function clampInt(x) {
+        x = Math.floor(x);
+        return Number.isFinite(x) ? x : 0;
+      }
+
+      function computeDziTileInfo(imageX, imageY) {
+        if (!item) return null;
+        const source = item.source;
+        const maxLevel = source.maxLevel ?? null;
+
+        let level = maxLevel;
+        try {
+          const z = viewer.viewport.getZoom(true);
+          const imageZoom = item.viewportToImageZoom(z);
+          if (typeof source.getLevelForZoom === "function") {
+            level = source.getLevelForZoom(imageZoom);
+          }
+        } catch (_) {}
+
+        if (level == null) return null;
+
+        const scale = (typeof source.getLevelScale === "function")
+          ? source.getLevelScale(level)
+          : Math.pow(0.5, (maxLevel - level));
+
+        const xL = imageX * scale;
+        const yL = imageY * scale;
+
+        const tw = (typeof source.getTileWidth === "function") ? source.getTileWidth(level) : 256;
+        const th = (typeof source.getTileHeight === "function") ? source.getTileHeight(level) : tw;
+
+        const tx = Math.floor(xL / tw);
+        const ty = Math.floor(yL / th);
+
+        const url = (typeof source.getTileUrl === "function")
+          ? source.getTileUrl(level, tx, ty)
+          : "(no getTileUrl)";
+
+        return { level, tx, ty, url };
+      }
+
+      function computeSourcePanel(imageX, imageY) {
+        if (!manifest || !contentSize) return null;
+
+        const across = manifest.across;
+        const shim = manifest.shim;
+        const border = manifest.border;
+        const files = Array.isArray(manifest.files) ? manifest.files : [];
+
+        if (!across || !shim || border == null || files.length === 0) return null;
+
+        const rawW = contentSize.x - 2 * border;
+        const rawH = contentSize.y - 2 * border;
+
+        const x0 = imageX - border;
+        const y0 = imageY - border;
+
+        if (x0 < 0 || y0 < 0 || x0 >= rawW || y0 >= rawH) {
+          return { where: "border", file: null, row: null, col: null };
+        }
+
+        const cols = across;
+        const rows = Math.ceil(files.length / cols);
+
+        // Assumes all inputs are same dimensions.
+        const tileW = (rawW - (cols - 1) * shim) / cols;
+        const tileH = (rawH - (rows - 1) * shim) / rows;
+
+        const cellW = tileW + shim;
+        const cellH = tileH + shim;
+
+        const col = Math.floor(x0 / cellW);
+        const row = Math.floor(y0 / cellH);
+
+        const inCellX = x0 - col * cellW;
+        const inCellY = y0 - row * cellH;
+
+        if (inCellX >= tileW || inCellY >= tileH) {
+          return { where: "shim", file: null, row, col };
+        }
+
+        const idx = row * cols + col;
+        const file = (idx >= 0 && idx < files.length) ? files[idx] : null;
+
+        return { where: "tile", file, row, col, idx };
+      }
+
+      // Throttle HUD updates
+      let pending = null;
+      function scheduleHudUpdate(ev) {
+        pending = ev;
+        if (scheduleHudUpdate._raf) return;
+        scheduleHudUpdate._raf = requestAnimationFrame(() => {
+          scheduleHudUpdate._raf = null;
+          if (!pending) return;
+          updateHudFromMouseEvent(pending);
+          pending = null;
+        });
+      }
+      scheduleHudUpdate._raf = null;
+
+      function updateHudFromMouseEvent(ev) {
+        if (!item) return;
+
+        const rect = viewer.element.getBoundingClientRect();
+        const px = ev.clientX - rect.left;
+        const py = ev.clientY - rect.top;
+
+        if (px < 0 || py < 0 || px > rect.width || py > rect.height) return;
+
+        const viewportPoint = viewer.viewport.pointFromPixel(new OpenSeadragon.Point(px, py), true);
+        const imagePoint = item.viewportToImageCoordinates(viewportPoint);
+
+        const imageX = clampInt(imagePoint.x);
+        const imageY = clampInt(imagePoint.y);
+
+        const dzi = computeDziTileInfo(imageX, imageY);
+        const src = computeSourcePanel(imageX, imageY);
+
+        const lines = [];
+        lines.push(`img: ${imageX}, ${imageY}`);
+
+        if (dzi) {
+          lines.push(`dzi: level ${dzi.level}  tile ${dzi.tx},${dzi.ty}`);
+          lines.push(`tileurl: ${dzi.url}`);
+        } else {
+          lines.push(`dzi: (no tile info yet)`);
+        }
+
+        if (src) {
+          if (src.where === "tile") {
+            lines.push(`src: r${src.row} c${src.col}  idx ${src.idx}`);
+            lines.push(`file: ${src.file}`);
+
+            if (src.file) {
+              const u = origUrlFor(src.file);
+              showLink(u);
+            } else {
+              hideLink();
+            }
+          } else if (src.where === "shim") {
+            lines.push(`src: (shim) r${src.row} c${src.col}`);
+            hideLink();
+          } else if (src.where === "border") {
+            lines.push(`src: (border)`);
+            hideLink();
+          } else {
+            hideLink();
+          }
+        } else {
+          lines.push(`src: (no manifest)`);
+          hideLink();
+        }
+
+        logHud(lines.join("\n"));
+      }
+
+      viewer.addHandler("open", async function () {
+        item = viewer.world.getItemAt(0);
+        contentSize = item ? item.getContentSize() : null;
+
+        await loadManifest();
+
+        // mousemove on viewer element
+        viewer.element.addEventListener("mousemove", scheduleHudUpdate, { passive: true });
+
+        if (contentSize) {
+          logHud(`Opened ${DZI}\nSize: ${contentSize.x} × ${contentSize.y}\n(manifest: ${manifest ? "ok" : "missing"})`);
+        } else {
+          logHud(`Opened ${DZI}\n(no content size?)\n(manifest: ${manifest ? "ok" : "missing"})`);
+        }
+      });
+
+      viewer.addHandler("open-failed", function (e) {
+        hideLink();
+        logHud("OPEN FAILED\n" + (e && (e.message || JSON.stringify(e, null, 2))));
+      });
+
+      viewer.addHandler("tile-load-failed", function (e) {
+        hideLink();
+        logHud(
+          "TILE LOAD FAILED\n" +
+          `url: ${e && e.tile && e.tile.url}\n` +
+          (e && (e.message || JSON.stringify(e, null, 2)))
+        );
+      });
+
+      window.addEventListener("error", (ev) => {
+        hideLink();
+        logHud("JS ERROR\n" + (ev.message || String(ev.error || ev)));
+      });
+    })();
+  </script>
+</body>
+</html>
+

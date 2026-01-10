@@ -1,0 +1,356 @@
+<!-- save as: gemini2.html -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>gemini2</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/openseadragon@4.1/build/openseadragon/openseadragon.min.js"></script>
+
+  <style>
+    html, body { width: 100%; height: 100%; margin: 0; background: #111; }
+    #viewer { width: 100vw; height: 100vh; background: #111; }
+
+    #ctxMenu {
+      position: fixed;
+      display: none;
+      z-index: 10001;
+      background: #1b1b1b;
+      border: 1px solid #333;
+      border-radius: 10px;
+      padding: 6px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.45);
+      min-width: 260px;
+      max-width: min(720px, calc(100vw - 24px));
+      font: 14px/1.25 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      user-select: none;
+    }
+    #ctxMenu .row {
+      padding: 8px 10px;
+      color: #ddd;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #ctxMenu .row.small { font-size: 12px; opacity: 0.85; }
+    #ctxMenu .row.mono {
+      font: 12px/1.25 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      opacity: 0.9;
+    }
+    #ctxMenu .divider { height: 1px; background: #333; margin: 6px 0; }
+    #ctxMenu button {
+      width: 100%;
+      border: 0;
+      background: transparent;
+      color: #eaeaea;
+      text-align: left;
+      padding: 10px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    #ctxMenu button:hover { background: #2a2a2a; }
+    #ctxMenu button:disabled { opacity: 0.45; cursor: default; }
+  </style>
+</head>
+
+<body>
+  <div id="viewer"></div>
+
+  <div id="ctxMenu" role="menu" aria-hidden="true">
+    <div class="row small" id="infoRow">loading…</div>
+    <div class="row" id="fileRow">—</div>
+    <div class="row mono" id="urlRow">—</div>
+    <div class="divider"></div>
+    <button id="downloadPairBtn" type="button" role="menuitem" disabled>download pair</button>
+    <button id="downloadPlainBtn" type="button" role="menuitem" disabled>download plain</button>
+  </div>
+
+  <script>
+    (function () {
+      const DZI = "gemini2.dzi";
+      const MANIFEST_URL = "gemini2_manifest.json";
+
+      // Override for where downloadable files live.
+      // Leave as "gemini2/" for local layout; later set to S3 prefix if desired.
+      const ORIG_BASE = "https://polyvec.s3.amazonaws.com/gemini2/";
+
+      const viewer = OpenSeadragon({
+        id: "viewer",
+        tileSources: DZI,
+        prefixUrl: "https://cdn.jsdelivr.net/npm/openseadragon@4.1/build/openseadragon/images/",
+        showNavigator: true,
+        navigatorPosition: "BOTTOM_RIGHT",
+        visibilityRatio: 1.0,
+        minZoomLevel: 0.5,
+        defaultZoomLevel: 0,
+        maxZoomPixelRatio: 4,
+        gestureSettingsMouse: { scrollToZoom: true }
+      });
+
+      const menuEl = document.getElementById("ctxMenu");
+      const infoRow = document.getElementById("infoRow");
+      const fileRow = document.getElementById("fileRow");
+      const urlRow  = document.getElementById("urlRow");
+      const downloadPairBtn  = document.getElementById("downloadPairBtn");
+      const downloadPlainBtn = document.getElementById("downloadPlainBtn");
+
+      let manifest = null;
+      let items = [];
+      let item0 = null;
+      let contentSize = null;
+
+      let pending = {
+        idx: null, row: null, col: null,
+        pair:  { file: null, url: null },
+        plain: { file: null, url: null }
+      };
+
+      function setInfo(t) { infoRow.textContent = t; }
+      function setFile(t) { fileRow.textContent = t; }
+      function setUrl(t)  { urlRow.textContent  = t; }
+
+      function hideMenu() {
+        menuEl.style.display = "none";
+        menuEl.setAttribute("aria-hidden", "true");
+        downloadPairBtn.disabled = true;
+        downloadPlainBtn.disabled = true;
+      }
+
+      function showMenu(x, y) {
+        menuEl.style.display = "block";
+        menuEl.setAttribute("aria-hidden", "false");
+
+        const pad = 8;
+        const mw = menuEl.offsetWidth;
+        const mh = menuEl.offsetHeight;
+
+        let left = x, top = y;
+        if (left + mw + pad > window.innerWidth) left = window.innerWidth - mw - pad;
+        if (top + mh + pad > window.innerHeight) top = window.innerHeight - mh - pad;
+        if (left < pad) left = pad;
+        if (top < pad) top = pad;
+
+        menuEl.style.left = left + "px";
+        menuEl.style.top  = top  + "px";
+      }
+
+      function isAbsUrl(s) {
+        return /^https?:\/\//i.test(String(s || ""));
+      }
+
+      function normBase(base) {
+        base = String(base || "").trim();
+        if (!base) return "";
+        return base.replace(/\/+$/, "") + "/";
+      }
+
+      function basename(p) {
+        p = String(p || "");
+        const m = p.match(/[^\/]+$/);
+        return m ? m[0] : p;
+      }
+
+      function stripPairSuffix(name) {
+        // g00055_pair.jpeg -> g00055.jpeg (preserve extension)
+        return String(name || "").replace(/_pair(?=\.[^.]+$)/i, "");
+      }
+
+      function buildDownloadUrl(rawFile) {
+        rawFile = String(rawFile || "").trim();
+        if (!rawFile || rawFile === "null" || rawFile === "undefined") return { url: null, file: null };
+
+        if (isAbsUrl(rawFile)) return { url: rawFile, file: basename(rawFile) };
+
+        const baseOverride = normBase(ORIG_BASE);
+        const baseManifest = normBase(manifest && manifest.base_url);
+        const base = baseOverride || baseManifest || "";
+
+        let rel = rawFile.replace(/^\/+/, "");
+        // avoid double prefix
+        if (base && rel.startsWith(base)) {
+          // ok
+        } else if (base) {
+          rel = base + rel;
+        }
+
+        const abs = new URL(rel, window.location.href).toString();
+        return { url: abs, file: basename(rel) };
+      }
+
+      async function loadManifest() {
+        const r = await fetch(MANIFEST_URL, { cache: "no-store" });
+        if (!r.ok) throw new Error(`manifest HTTP ${r.status}`);
+        manifest = await r.json();
+
+        if (Array.isArray(manifest.items)) items = manifest.items.slice();
+        else if (Array.isArray(manifest.files)) items = manifest.files.slice();
+        else items = [];
+      }
+
+      function clampInt(x, lo, hi) {
+        x = Math.floor(x);
+        if (!Number.isFinite(x)) x = lo;
+        if (x < lo) x = lo;
+        if (x > hi) x = hi;
+        return x;
+      }
+
+      function imagePointFromMouse(ev) {
+        const rect = viewer.element.getBoundingClientRect();
+        const px = ev.clientX - rect.left;
+        const py = ev.clientY - rect.top;
+
+        const vp = viewer.viewport.pointFromPixel(new OpenSeadragon.Point(px, py), true);
+        const ip = item0.viewportToImageCoordinates(vp);
+
+        return {
+          x: clampInt(ip.x, 0, Math.max(0, Math.floor(contentSize.x - 1))),
+          y: clampInt(ip.y, 0, Math.max(0, Math.floor(contentSize.y - 1))),
+        };
+      }
+
+      function pickClosestIndex(imageX, imageY) {
+        const across = manifest.across;
+        const shim   = manifest.shim;
+        const border = manifest.border;
+
+        const n = items.length;
+        const cols = across;
+        const rows = Math.ceil(n / cols);
+
+        const rawW = contentSize.x - 2 * border;
+        const rawH = contentSize.y - 2 * border;
+
+        let x0 = imageX - border;
+        let y0 = imageY - border;
+        x0 = Math.max(0, Math.min(rawW - 1, x0));
+        y0 = Math.max(0, Math.min(rawH - 1, y0));
+
+        const tileW = (rawW - (cols - 1) * shim) / cols;
+        const tileH = (rawH - (rows - 1) * shim) / rows;
+
+        const cellW = tileW + shim;
+        const cellH = tileH + shim;
+
+        let col = Math.round((x0 - tileW / 2) / cellW);
+        let row = Math.round((y0 - tileH / 2) / cellH);
+
+        col = clampInt(col, 0, cols - 1);
+        row = clampInt(row, 0, rows - 1);
+
+        let idx = row * cols + col;
+        idx = clampInt(idx, 0, n - 1);
+
+        return { idx, row: Math.floor(idx / cols), col: idx % cols };
+      }
+
+      function setPending(sel) {
+        pending = sel || {
+          idx: null, row: null, col: null,
+          pair: { file: null, url: null },
+          plain: { file: null, url: null }
+        };
+
+        const okPair  = !!pending.pair.url;
+        const okPlain = !!pending.plain.url;
+
+        downloadPairBtn.disabled  = !okPair;
+        downloadPlainBtn.disabled = !okPlain;
+
+        if (okPair || okPlain) {
+          setInfo(`idx ${pending.idx}  r${pending.row} c${pending.col}`);
+          setFile(`pair:  ${pending.pair.file || "—"}   |   plain: ${pending.plain.file || "—"}`);
+          setUrl(`pair: ${pending.pair.url || "—"}`);
+          console.log("pair:", pending.pair.file, pending.pair.url);
+          console.log("plain:", pending.plain.file, pending.plain.url);
+        } else {
+          setInfo("(no file)");
+          setFile("—");
+          setUrl("—");
+        }
+      }
+
+      viewer.addHandler("open", async function () {
+        item0 = viewer.world.getItemAt(0);
+        contentSize = item0 ? item0.getContentSize() : null;
+
+        try {
+          await loadManifest();
+          setInfo(`manifest ok (${items.length} files)`);
+          setFile("right-click to pick a file");
+          setUrl("—");
+        } catch (e) {
+          manifest = null;
+          items = [];
+          setInfo("manifest ERROR");
+          setFile(String(e));
+          setUrl("—");
+          console.error(e);
+        }
+      });
+
+      viewer.container.addEventListener("contextmenu", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+
+        showMenu(ev.clientX, ev.clientY);
+
+        if (!item0 || !contentSize || !manifest || items.length === 0) {
+          setPending(null);
+          return;
+        }
+
+        const ip = imagePointFromMouse(ev);
+        const pick = pickClosestIndex(ip.x, ip.y);
+
+        const rawPair = items[pick.idx];
+        const builtPair = buildDownloadUrl(rawPair);
+
+        // "plain" is the same name but without "_pair"
+        const rawPlain = stripPairSuffix(String(rawPair || ""));
+        const builtPlain = buildDownloadUrl(rawPlain);
+
+        setPending({
+          idx: pick.idx,
+          row: pick.row,
+          col: pick.col,
+          pair:  builtPair,
+          plain: builtPlain
+        });
+      }, { capture: true });
+
+      function triggerDownload(file, url) {
+        if (!url) return;
+        console.log("downloading:", file, url);
+
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = file || "";
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }
+
+      downloadPairBtn.addEventListener("click", () => {
+        if (!pending || !pending.pair.url) return;
+        hideMenu();
+        triggerDownload(pending.pair.file, pending.pair.url);
+      });
+
+      downloadPlainBtn.addEventListener("click", () => {
+        if (!pending || !pending.plain.url) return;
+        hideMenu();
+        triggerDownload(pending.plain.file, pending.plain.url);
+      });
+
+      window.addEventListener("mousedown", (e) => { if (!menuEl.contains(e.target)) hideMenu(); }, true);
+      window.addEventListener("keydown", (e) => { if (e.key === "Escape") hideMenu(); });
+      window.addEventListener("resize", hideMenu);
+      window.addEventListener("scroll", hideMenu, true);
+    })();
+  </script>
+</body>
+</html>
