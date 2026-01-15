@@ -27,19 +27,15 @@ just:
 
 import sys
 from pathlib import Path
-parent = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(parent))
 
 import time
 import math
 import argparse
 import numpy as np
-import subprocess
 
-from specparser import specparser
+from specparser import chain as specparser
 from specparser import expander
 from rasterizer import raster
-
 
 import maps
 import fields
@@ -329,6 +325,17 @@ def main() -> None:
         action="store_true",
         help="No auto-levels.",
     )
+    p.add_argument(
+        "--no-text",
+        action="store_true",
+        help="No text.",
+    )
+    p.add_argument(
+        "--resize",
+        type=int,
+        default=None,
+        help="Final resize",
+    )
     
 
     args = p.parse_args()
@@ -360,6 +367,8 @@ def main() -> None:
     expander.DICT["outstem"]=stem
     expander.DICT["outsuffix"] = suffix
     expander.DICT["outschema"] = outdir / stem
+    specparser.NAMES["outschema"] = outdir / stem
+
 
     # Expand the main spec chain
     specs = expander.expand(expander.macro(args.spec))
@@ -375,6 +384,7 @@ def main() -> None:
         raise SystemExit("Spec expansion produced no tiles")
 
     for i, spec in enumerate(specs, start=1):
+        spec = specparser.add_slot(spec)
         sid = specparser.slot_suffix(spec, width=5)
         out_path = outdir / f"{stem}_{sid}{suffix}"
         spec_path = out_path.with_suffix(".spec")
@@ -393,14 +403,20 @@ def main() -> None:
 
         rgb = np.flipud(rgb)
 
+        if args.no_text:
+            footer = None
+        else:
+            footer = spec
+
         raster.save_jpg_rgb(
             rgb,
             out_path=str(out_path),
-            footer_text=spec,
+            footer_text=footer,
             footer_pad_lr_px=48,
             footer_dpi=300,
             spec=spec,
             autolvl=(not args.no_auto),
+            resize=args.resize,
         )
         spec_path.write_text(spec + "\n", encoding="utf-8")
         print(f"saved: {out_path}")
@@ -425,3 +441,5 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 
+
+#ffmpeg -framerate 20 -start_number 1 -i 'tst2/tst2_%05d.jpg' -vf "tmix=frames=10:weights='1 1 1 1 1 1 1 1 1 1',format=yuv420p" \ -c:v libx264 -crf 18 -preset medium -movflags +faststart out_avg10.mp4

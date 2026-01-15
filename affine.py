@@ -1,12 +1,10 @@
 
 import sys
 from pathlib import Path
-parent = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(parent))
-
 import numpy as np
 import math
-from specparser import specparser, expander
+from specparser import chain as specparser
+from specparser import expander
 import maps
 
 # ---------------------------------------------------------------------------
@@ -95,6 +93,17 @@ def _get_turns(d: dict, key: str = "rot", default: float = 0.0) -> float:
     except Exception:
         return float(default)
 
+def _get_scale(d: dict, key: str = "scale", default: float = 1.0) -> float:
+    vals = d.get(key)
+    if not vals:
+        return float(default)
+    if len(vals) < 1:
+        return float(default)
+    try:
+        return float(_eval_number(vals[0]).real)
+    except Exception:
+        return float(default)
+
 
 def _rotate_point_xy(x: float, y: float, cx: float, cy: float, c: float, s: float):
     dx = x - cx
@@ -138,6 +147,34 @@ def apply_rot_to_affine_domain(
 
     out = np.asarray([llx, lly, ulx, uly, lrx, lry], dtype=np.float64)
     return out
+
+
+def apply_scale_to_affine_domain(
+    domain_affine: np.ndarray,
+    scale: float,
+    *,
+    pivot: tuple[float, float] | None = None,
+) -> np.ndarray:
+    if scale == 1.0:
+        return domain_affine
+
+    llx, lly, ulx, uly, lrx, lry = map(float, domain_affine.tolist())
+
+    if pivot is None:
+        cx = 0.5 * (ulx + lrx)
+        cy = 0.5 * (uly + lry)
+    else:
+        cx, cy = float(pivot[0]), float(pivot[1])
+
+    def spt(x: float, y: float):
+        return (cx + scale * (x - cx), cy + scale * (y - cy))
+
+    llx, lly = spt(llx, lly)
+    ulx, uly = spt(ulx, uly)
+    lrx, lry = spt(lrx, lry)
+
+    return np.asarray([llx, lly, ulx, uly, lrx, lry], dtype=np.float64)
+
 
 def build_affine_domain(
     specdict: dict,
@@ -216,6 +253,10 @@ def build_affine_domain(
     turns = _get_turns(specdict, "rot", 0.0)
     if turns != 0.0:
         domain_affine = apply_rot_to_affine_domain(domain_affine, turns)
+
+    scale = _get_scale(specdict, "scale", 1.0)
+    if scale != 1.0:
+        domain_affine = apply_scale_to_affine_domain(domain_affine, scale)
 
     return domain_affine
 

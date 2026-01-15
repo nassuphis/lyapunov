@@ -1,10 +1,9 @@
 import sys
 from pathlib import Path
-parent = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(parent))
 import numpy as np
 from rasterizer import colors
-from specparser import specparser
+from specparser import chain as specparser
+
 
 # ---------------------------------------------------------------------------
 # Color mapping: Lyapunov exponent or Entropy or Custom -> RGB (schemes)

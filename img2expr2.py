@@ -360,7 +360,7 @@ def generate_image_bytes(
         "Make an abstract expressionist oil painting based on this composition. "
         "Use appropriate brush strokes, but preserve the geometry. "
         "The composition must be identical, not approximate. "
-        "Try to map every visual element of the input image to a visual element in the output imege. "
+        "Try to map every visual element of the input image to a visual element in the output image. "
         "The output image should contain no visual elements that do not correspond to something in the input image. "
         "No text, no signatures, no borders, no cropping. "
         "Make sure the painting can be executed without fine brushwork."

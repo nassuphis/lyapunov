@@ -3,7 +3,7 @@
 # loc101 NN14 map generator 
 #
 # ----------------------------------------------------------
-@RUN=@LYAP0
+@RUN0=@LYAP0
 @LYAP0=slot:{1:@SLOTS0},@MAP14,@M0,@RGB0,@HIST0
 # ----------------------------------------------------------
 # number of samples
@@ -61,8 +61,8 @@
 @FUNS1=f"cos({@SELVAR0})",f"sin({@SELVAR0})"
 @FUNS2=f"si({@SELVAR0})",f"ci({@SELVAR0})",f"ei({@SELVAR0})"
 @SELVAR0=choose(@SELVAR1,@SELVAR2)
-@SELVAR1="l","l*l","l*l-l","l**3-l**2+l","l**3+l**2-l","l**4-l**3+l**2-l","l**5-l**4+l**3-l**2+l"
-@SELVAR2="x*x-l*l","l*x+l+x","x**5+l**5-x**4-l**4+x**3+l**3","(x+l)*(x-l)*(x*x-l*l)*(x*x+l*l)"
+@SELVAR1="cos(l)","cos(l*l)","cos(l*l-l)","cos(l**3-l**2+l)","cos(l**3+l**2-l)","cos(l**4-l**3+l**2-l)","cos(l**5-l**4+l**3-l**2+l)"
+@SELVAR2="sin(x*x-l*l)","sin(l*x+l+x)","sin(x**5+l**5-x**4-l**4+x**3+l**3)","sin((x+l)*(x-l)*(x*x-l*l)*(x*x+l*l))"
 # ----------------------------------------------------------
 # integer order
 @ORD0=choose("1","2","3","4","5","6","7")

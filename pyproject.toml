@@ -1,0 +1,16 @@
+[project]
+name = "lyapunov"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "numba>=0.62,<0.64",
+    "numpy>=2.3,<2.4",
+    "rasterizer",
+    "scipy>=1.17.0",
+    "specparser",
+    "sympy>=1.14.0",
+]
+
+[tool.uv.sources]
+specparser = { path = "../specparser", editable = true }
+rasterizer = { path = "../rasterizer", editable = true }
