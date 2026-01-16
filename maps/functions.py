@@ -3,7 +3,7 @@ import cmath
 import numpy as np
 from numba import njit, types
 
-import wavelet
+from . import wavelet
 
 # ---------------------------------------------------------------------------
 # Constants

@@ -11,6 +11,11 @@ dependencies = [
     "sympy>=1.14.0",
 ]
 
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+]
+
 [tool.uv.sources]
 specparser = { path = "../specparser", editable = true }
 rasterizer = { path = "../rasterizer", editable = true }

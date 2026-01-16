@@ -8,7 +8,7 @@ import numpy as np
 
 from specparser import chain as specparser
 
-from fields import (
+from maps.fields import (
     lyapunov_field_1d,
     lyapunov_field_2d_ab,
     lyapunov_field_2d,
