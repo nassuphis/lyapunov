@@ -38,6 +38,38 @@ DEFAULT_GAMMA    = 1.0      # colormap gamma
 
 MAP_TEMPLATES: dict[str, dict] = {
 
+     "nn2d": dict( 
+        type   = "step2d",
+        expr_x="t*x*(1-x)+p*y*(1-y)",
+        expr_y="p*x*(1-x)+t*y*(1-y)",
+        # Jacobian:
+        jac_exprs=( "0", "0", "0", "0" ),
+        domain=[-20.0, -20.0, 20.0 , 20.0],
+        pardict=dict(
+            p="first",   # horizontal axis
+            t="second",  # vertical axis
+        ),
+        x0=0.5, y0=0.5,
+        trans=5, iter=20, 
+        eps_floor=1e-16,
+    ),
+
+    "nn2dxy0": dict( 
+        type   = "step2d_xy0",
+        expr_x="p*x*(params[0]-y)+t*y",
+        expr_y="t*y*(params[1]-x)+p*x",
+        # Jacobian:
+        jac_exprs=( "0", "0", "0", "0" ),
+        domain=[-20.0, -20.0, 20.0 , 20.0],
+        pardict=dict(
+            p="first",   # horizontal axis
+            t="second",  # vertical axis
+        ),
+        x0="noise", y0="noise",
+        trans=500, iter=500, 
+        eps_floor=1e-16,
+    ),
+
     "cardiac": dict(
         type   = "step2d",
         domain=[20.0, 0.0, 140.0, 150.0],
@@ -1791,6 +1823,26 @@ def sympy_jacobian_2d(expr_x: str, expr_y: str):
 
 def funtext_1d(name:str ,expr:str, dict) -> str:
     lines = [
+        f"def {name}(x, forced, params):",
+    ]
+    for i, (key, value) in enumerate(dict.items()):
+        if not isinstance(key, str):
+            raise TypeError(f"Only str keys supported, got {type(key)!r}")
+        if not key.isidentifier():
+            raise ValueError(f"Key {key!r} is not a valid Python identifier")
+        lines.extend([
+        f"    {key} = {value}"
+        ])
+    lines.extend([
+        f"    x_next = {expr}",
+        f"    return x_next"
+    ])
+    source = "\n".join(lines)
+    return source
+
+def funtext_1d_deriv(name:str ,expr:str, dict) -> str:
+    """Generate derivative function text WITHOUT params (for sympy compatibility)."""
+    lines = [
         f"def {name}(x, forced):",
     ]
     for i, (key, value) in enumerate(dict.items()):
@@ -1810,7 +1862,7 @@ def funtext_1d(name:str ,expr:str, dict) -> str:
 
 def funtext_2d_ab_step(name: str, expr_x: str, expr_y: str, dict) -> str:
     lines = [
-        f"def {name}(x, y, forced):",
+        f"def {name}(x, y, forced, params):",
     ]
     for i, (key, value) in enumerate(dict.items()):
         if not isinstance(key, str):
@@ -1854,7 +1906,7 @@ def funtext_2d_ab_jac(
 
 def funtext_2d_step(name: str, expr_x: str, expr_y: str, dict) -> str:
     lines = [
-        f"def {name}(x, y, first, second):",
+        f"def {name}(x, y, first, second, params):",
     ]
     for i, (key, value) in enumerate(dict.items()):
         if not isinstance(key, str):
@@ -1900,14 +1952,21 @@ def funtext_2d_jac(
 # build python functions from text
 # ---------------------------------------------------------------------------
 
-# 1D forced step + deriv
+# 1D forced step (with params)
 def funpy_1d(expr: str, dict):
     ns = functions.NS.copy()
     src = funtext_1d("impl",expr, dict)
     exec(src, ns, ns)
     return ns["impl"]
 
-# 2D forced step 
+# 1D derivative (WITHOUT params - for sympy compatibility)
+def funpy_1d_deriv(expr: str, dict):
+    ns = functions.NS.copy()
+    src = funtext_1d_deriv("impl_deriv", expr, dict)
+    exec(src, ns, ns)
+    return ns["impl_deriv"]
+
+# 2D forced step
 def funpy_2d_ab_step(expr_x: str, expr_y: str, dict):
     ns = functions.NS.copy()
     src = funtext_2d_ab_step("impl2_step", expr_x, expr_y, dict)
@@ -1946,12 +2005,20 @@ def funpy_2d_jac(dXdx, dXdy, dYdx, dYdy,dict):
 STEP_SIG = types.float64(
     types.float64,   # x, the mapped variable
     types.float64,   # forced
+    types.Array(types.float64, 1, 'C'),  # params: read-only array of precomputed values
+)
+
+# Derivative signature: NO params (as per user requirement - doesn't work well with sympy)
+DERIV_SIG = types.float64(
+    types.float64,   # x, the mapped variable
+    types.float64,   # forced
 )
 
 STEP2_AB_SIG = types.UniTuple(types.float64, 2)(
     types.float64,  # x, mapped variable
     types.float64,  # y, mapped variable
     types.float64,  # forced
+    types.Array(types.float64, 1, 'C'),  # params: read-only array of precomputed values
 )
 
 JAC2_AB_SIG = types.UniTuple(types.float64, 4)(
@@ -1965,6 +2032,7 @@ STEP2_SIG = types.UniTuple(types.float64, 2)(
     types.float64,  # y, mapped variable
     types.float64,  # first
     types.float64,  # second
+    types.Array(types.float64, 1, 'C'),  # params: read-only array of precomputed values
 )
 
 JAC2_SIG = types.UniTuple(types.float64, 4)(
@@ -1978,6 +2046,12 @@ JAC2_SIG = types.UniTuple(types.float64, 4)(
 def funjit_1d(expr:str, dict):
     fun = funpy_1d(expr,dict)
     jit = njit(STEP_SIG, cache=False, fastmath=False)(fun)
+    return jit
+
+def funjit_1d_deriv(expr:str, dict):
+    """JIT compile a 1D derivative function WITHOUT params (for sympy compatibility)."""
+    fun = funpy_1d_deriv(expr, dict)
+    jit = njit(DERIV_SIG, cache=False, fastmath=False)(fun)
     return jit
 
 def funjit_2d_ab_step(xexpr:str, yexpr:str, dict):
@@ -2008,6 +2082,11 @@ def substitute_common(x,d):
     return x
 
 
+#
+# TODO: right now new maps are initialized in-place, thats
+# bad global variable stuff. need to make new map local
+#
+
 def build_map(name: str) -> dict:
 
     if name not in MAP_TEMPLATES:
@@ -2021,18 +2100,18 @@ def build_map(name: str) -> dict:
     new_cfg["domain"]  = np.asarray(cfg.get("domain", [0.0, 0.0, 1.0, 1.0]),dtype=np.float64)
     new_cfg["type"] = type
 
-    if type == "step1d":
+    if type in ("step1d", "step1d_x0"):
         expr = substitute_common(cfg["expr"],cfg.get("expr_common"))
         new_cfg["step"]  =  funjit_1d(expr,pardict)
         if "deriv_expr" in cfg:
             deriv_expr = substitute_common(cfg["deriv_expr"],cfg.get("expr_common"))
         else:
-            deriv_expr =  sympy_deriv(substitute_common(cfg.get("expr"),cfg.get("expr_common"))) 
-        new_cfg["deriv"] =  funjit_1d(deriv_expr,pardict)
+            deriv_expr =  sympy_deriv(substitute_common(cfg.get("expr"),cfg.get("expr_common")))
+        new_cfg["deriv"] =  funjit_1d_deriv(deriv_expr,pardict)
         new_cfg["eps_floor"] = cfg.get("eps_floor", 1e-16)
         return new_cfg
     
-    if type == "step2d":
+    if type in ("step2d", "step2d_xy0"):
         if "step2_func" in cfg and "jac2_func" in cfg:
             new_cfg["step2"] = njit(STEP2_SIG, cache=False, fastmath=False)(cfg["step2_func"])
             new_cfg["jac2"]  = njit(JAC2_SIG, cache=False, fastmath=False)(cfg["jac2_func"])
@@ -2052,7 +2131,7 @@ def build_map(name: str) -> dict:
         new_cfg["eps_floor"] = cfg.get("eps_floor", 1e-16)
         return new_cfg
     
-    if type == "step2d_ab":
+    if type in ("step2d_ab", "step2d_ab_xy0"):
         if "step2_func" in cfg and "jac2_func" in cfg:
             new_cfg["step2_ab"] = njit(STEP2_AB_SIG, cache=False, fastmath=False)(cfg["step2_func"])
             new_cfg["jac2_ab"]  = njit(JAC2_AB_SIG, cache=False, fastmath=False)(cfg["jac2_func"])

@@ -348,6 +348,7 @@ dependencies = [
     { name = "numpy" },
     { name = "pillow" },
     { name = "pyvips" },
+    { name = "scipy" },
 ]
 
 [package.metadata]
@@ -356,6 +357,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.3,<2.4" },
     { name = "pillow", specifier = ">=12.1.0" },
     { name = "pyvips", specifier = ">=3.1.1" },
+    { name = "scipy", specifier = ">=1.17.0" },
 ]
 
 [[package]]
@@ -442,9 +444,11 @@ dependencies = [
 requires-dist = [
     { name = "exchange-calendars", specifier = ">=4.5" },
     { name = "numpy", specifier = "==2.3.4" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pyvips", specifier = ">=3.1.1" },
     { name = "simpleeval", specifier = ">=1.0.3" },
 ]
+provides-extras = ["dev"]
 
 [[package]]
 name = "sympy"

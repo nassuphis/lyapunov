@@ -22,13 +22,14 @@ def map_logical_to_physical(domain, u, v):
 def lyapunov_field_1d(
     step,
     deriv,
-    seq,        
+    seq,
     domain,     # <- 1D float64 array: [llx, lly, ulx, uly, lrx, lry]
     pix,
     x0,
     n_transient,
     n_iter,
     eps,
+    params,
 ):
     """
     Generic λ-field for a 1‑D map with A/B forcing, over an arbitrary
@@ -54,7 +55,7 @@ def lyapunov_field_1d(
                 force = seq[n % seq_len] % 2
                 forced_param = A if force==0 else B
                 d = deriv(x, forced_param)
-                x = step(x, forced_param)
+                x = step(x, forced_param, params)
 
                 if not np.isfinite(x):
                     x = 0.5
@@ -82,6 +83,7 @@ def lyapunov_field_2d_ab(
     n_transient,
     n_iter,
     eps_floor,
+    params,
 ):
     seq_len = seq.size
     out = np.empty((pix, pix), dtype=np.float64)
@@ -103,14 +105,14 @@ def lyapunov_field_2d_ab(
             for n in range(n_transient + n_iter):
                 force = seq[n % seq_len] % 2
                 forced_param = A if force==0 else B
- 
+
                 dXdx, dXdy, dYdx, dYdy = jac2_ab(x, y, forced_param)
 
                 vx_new = dXdx * vx + dXdy * vy
                 vy_new = dYdx * vx + dYdy * vy
                 vx, vy = vx_new, vy_new
 
-                x_next, y_next = step2_ab(x, y, forced_param)
+                x_next, y_next = step2_ab(x, y, forced_param, params)
 
                 if not np.isfinite(x_next) or not np.isfinite(y_next):
                     x_next = 0.5
@@ -145,6 +147,7 @@ def lyapunov_field_2d(
     n_transient,
     n_iter,
     eps_floor,
+    params,
 ):
     """
     Generic λ-field for a 2‑D map over an arbitrary parallelogram in the
@@ -172,7 +175,7 @@ def lyapunov_field_2d(
             acc = 0.0
 
             for n in range(n_transient + n_iter):
-                x_next, y_next = step2(x, y, first_param,second_param)
+                x_next, y_next = step2(x, y, first_param,second_param, params)
                 if not np.isfinite(x_next) or not np.isfinite(y_next):
                     x_next = 0.5
                     y_next = 0.0
@@ -238,6 +241,7 @@ def entropy_field_1d(
     n_transient,
     n_iter,
     omegas,     # 1D float64 array of frequencies
+    params,
 ):
     """
     Streaming spectral-entropy field for a 1-D AB-forced map.
@@ -266,7 +270,7 @@ def entropy_field_1d(
             for n in range(n_transient):
                 force = seq[n % seq_len] % 2
                 forced_param = A if force == 0 else B
-                x = step(x, forced_param)
+                x = step(x, forced_param, params)
                 if not np.isfinite(x):
                     x = 0.5
 
@@ -284,7 +288,7 @@ def entropy_field_1d(
             for n in range(n_iter):
                 force = seq[n % seq_len] % 2
                 forced_param = A if force == 0 else B
-                x = step(x, forced_param)
+                x = step(x, forced_param, params)
                 if not np.isfinite(x):
                     x = 0.5
 
@@ -329,6 +333,7 @@ def entropy_field_2d_ab(
     n_transient,
     n_iter,
     omegas,
+    params,
 ):
     """
     Streaming spectral-entropy field for a 2-D AB-forced map.
@@ -358,7 +363,7 @@ def entropy_field_2d_ab(
             for n in range(n_transient):
                 force = seq[n % seq_len] % 2
                 forced_param = A if force == 0 else B
-                x, y = step2_ab(x, y, forced_param)
+                x, y = step2_ab(x, y, forced_param, params)
                 if not np.isfinite(x) or not np.isfinite(y):
                     x = 0.5
                     y = 0.5
@@ -377,7 +382,7 @@ def entropy_field_2d_ab(
             for n in range(n_iter):
                 force = seq[n % seq_len] % 2
                 forced_param = A if force == 0 else B
-                x, y = step2_ab(x, y, forced_param)
+                x, y = step2_ab(x, y, forced_param, params)
                 if not np.isfinite(x) or not np.isfinite(y):
                     x = 0.5
                     y = 0.5
@@ -422,6 +427,7 @@ def entropy_field_2d(
     n_transient,
     n_iter,
     omegas,
+    params,
 ):
     """
     Streaming spectral-entropy field for a non-forced 2-D map.
@@ -450,7 +456,7 @@ def entropy_field_2d(
 
             # burn-in
             for n in range(n_transient):
-                x, y = step2(x, y, first_param, second_param)
+                x, y = step2(x, y, first_param, second_param, params)
                 if not np.isfinite(x) or not np.isfinite(y):
                     x = 0.5
                     y = 0.0
@@ -467,7 +473,7 @@ def entropy_field_2d(
             mean = 0.0
 
             for n in range(n_iter):
-                x, y = step2(x, y, first_param, second_param)
+                x, y = step2(x, y, first_param, second_param, params)
                 if not np.isfinite(x) or not np.isfinite(y):
                     x = 0.5
                     y = 0.0
@@ -518,21 +524,103 @@ def hist_fixed_bins_inplace(bins, x, xmin, xmax):
 
 
 @njit
-def compute_orbit(step, x0, A, B, seq, n_transient, n_iter, xs):
+def make_params_with_x0(x0, params):
+    """Prepend x0 to params array: [x0, params[0], params[1], ...]"""
+    n = params.size
+    out = np.empty(n + 1, dtype=np.float64)
+    out[0] = x0
+    for i in range(n):
+        out[i + 1] = params[i]
+    return out
+
+@njit
+def make_params_with_xy0(x0, y0, params):
+    """Prepend x0, y0 to params array: [x0, y0, params[0], params[1], ...]"""
+    n = params.size
+    out = np.empty(n + 2, dtype=np.float64)
+    out[0] = x0
+    out[1] = y0
+    for i in range(n):
+        out[i + 2] = params[i]
+    return out
+
+@njit
+def compute_orbit(step, x0, A, B, seq, n_transient, n_iter, xs, params):
     seq_len = seq.size
     x = x0
+    # Prepend x0 to params: params[0] = x0, then original params
+    p = make_params_with_x0(x0, params)
     for n in range(n_transient):
         force = seq[n % seq_len] & 1
         forced_param = A if force == 0 else B
-        x = step(x, forced_param)
+        x = step(x, forced_param, p)
         if not math.isfinite(x): x = 0.5
     for n in range(n_iter):
         force = seq[n % seq_len] & 1
         forced_param = A if force == 0 else B
-        x = step(x, forced_param)
+        x = step(x, forced_param, p)
         if not math.isfinite(x): x = 0.5
         xs[n] = x
     return
+
+@njit
+def compute_orbit_2d_ab(step2_ab, x0, y0, A, B, seq, n_transient, n_iter, xs, params):
+    """
+    Collect an orbit for a 2-D AB-forced map, storing *y* into xs.
+    (If you want x instead, store x.)
+    """
+    seq_len = seq.size
+    x = x0
+    y = y0
+    # Prepend x0, y0 to params: params[0] = x0, params[1] = y0, then original params
+    p = make_params_with_xy0(x0, y0, params)
+
+    for n in range(n_transient):
+        force = seq[n % seq_len] & 1
+        forced_param = A if force == 0 else B
+        x, y = step2_ab(x, y, forced_param, p)
+        if (not math.isfinite(x)) or (not math.isfinite(y)):
+            x = 0.5
+            y = 0.5
+
+    for n in range(n_iter):
+        force = seq[n % seq_len] & 1
+        forced_param = A if force == 0 else B
+        x, y = step2_ab(x, y, forced_param, p)
+        if (not math.isfinite(x)) or (not math.isfinite(y)):
+            x = 0.5
+            y = 0.5
+        xs[n] = y   # <-- histogram variable (you suggested y)
+
+    return
+
+
+@njit
+def compute_orbit_2d(step2, x0, y0, first_param, second_param, n_transient, n_iter, xs, params):
+    """
+    Collect an orbit for a 2-D non-forced map, storing *y* into xs.
+    (If you want x instead, store x.)
+    """
+    x = x0
+    y = y0
+    # Prepend x0, y0 to params: params[0] = x0, params[1] = y0, then original params
+    p = make_params_with_xy0(x0, y0, params)
+
+    for n in range(n_transient):
+        x, y = step2(x, y, first_param, second_param, p)
+        if (not math.isfinite(x)) or (not math.isfinite(y)):
+            x = 0.5
+            y = 0.0
+
+    for n in range(n_iter):
+        x, y = step2(x, y, first_param, second_param, p)
+        if (not math.isfinite(x)) or (not math.isfinite(y)):
+            x = 0.5
+            y = 0.0
+        xs[n] = y   # <-- histogram variable (you suggested y)
+
+    return
+
 
 @njit
 def copy(xs, vs):
@@ -727,7 +815,12 @@ def tailratio(hist):
 
 
 @njit
-def transform_hist(hcalc,hist):
+def transform_hist(hcalc, hist, vs, vmin, vmax):
+    """
+    Transform histogram/values into a scalar.
+    hcalc 0-9: histogram-based statistics
+    hcalc 10+: value-based statistics (use vs, vmin, vmax)
+    """
     if   hcalc==0: return np.std(hist)
     elif hcalc==1: return entropy(hist)
     elif hcalc==2: return zerocross(hist)
@@ -738,6 +831,16 @@ def transform_hist(hcalc,hist):
     elif hcalc==7: return maxratio(hist)
     elif hcalc==8: return lrratio(hist)
     elif hcalc==9: return tailratio(hist)
+    # value-based statistics
+    elif hcalc==10: return np.median(vs)
+    elif hcalc==11: return vmax - vmin  # range
+    elif hcalc==12: return np.mean(vs)
+    elif hcalc==13: return np.std(vs)
+    elif hcalc==14:
+        v = vs[vs.size - 1]
+        if not math.isfinite(v):
+            return 0.0
+        return v
     return 0.0
 
 
@@ -751,9 +854,10 @@ def hist_field_1d(
     x0,
     n_transient,
     n_iter,
-    vcalc=0,
-    hcalc=0,
-    hbins=32,
+    vcalc,
+    hcalc,
+    hbins,
+    params,
 ):
 
     out = np.empty((pix, pix), dtype=np.float64)
@@ -765,7 +869,7 @@ def hist_field_1d(
         hist = np.zeros(hbins, dtype=np.int64)
         for i in range(pix):
             A, B = map_logical_to_physical(domain, i / denom, j / denom)
-            compute_orbit(step, x0, A, B, seq, n_transient, n_iter, xs)
+            compute_orbit(step, x0, A, B, seq, n_transient, n_iter, xs, params)
             transform_values(vcalc, xs, vs)
             vmin = 1e300
             vmax = -1e300
@@ -775,7 +879,7 @@ def hist_field_1d(
                 if v > vmax: vmax = v
             for k in range(hist.size): hist[k] = 0  # reset
             hist_fixed_bins_inplace(hist, vs, vmin, vmax)
-            e=transform_hist(hcalc,hist)
+            e = transform_hist(hcalc, hist, vs, vmin, vmax)
             out[j, i] = -e
 
     return out
@@ -790,110 +894,37 @@ def hist_field_2d_ab(
     y0,
     n_transient,
     n_iter,
-    vcalc=0,
-    hcalc=0
+    vcalc,
+    hcalc,
+    hbins,
+    params,
 ):
-    """
-    Histogram-based texture field for a 2-D AB-forced map.
-    Observable is derived from x via vcalc:
-        0: value      -> v = x
-        1: slope      -> v = x - px
-        2: convexity  -> v = x - 2*px + ppx
-        3: curvature  -> v = |x-2px+ppx| / (1 + (x-px)^2)^(3/2)
-    hcalc selects the histogram functional (same as 1-D version):
-        0: std(bins)
-        1: entropy(bins)
-        2: "zero-crossings" of bins about their mean
-        3: std(diff(bins))
-    """
-    seq_len = seq.size
     out = np.empty((pix, pix), dtype=np.float64)
     denom = 1.0 if pix <= 1 else (pix - 1.0)
 
     for j in prange(pix):
-        vs   = np.zeros(n_iter, dtype=np.float64)
-        bins = np.empty(n_iter, dtype=np.int64)
+        xs   = np.empty(n_iter, dtype=np.float64)   # will hold y-orbit
+        vs   = np.empty(n_iter, dtype=np.float64)   # transformed values
+        hist = np.zeros(hbins, dtype=np.int64)
 
         for i in range(pix):
             A, B = map_logical_to_physical(domain, i / denom, j / denom)
 
-            # burn-in
-            x = x0
-            y = y0
-            px = x0
-            ppx = x0
-            for n in range(n_transient):
-                force = seq[n % seq_len] & 1
-                forced_param = A if force == 0 else B
-                x, y = step2_ab(x, y, forced_param)
-                if (not np.isfinite(x)) or (not np.isfinite(y)):
-                    x = 0.5
-                    y = 0.5
-                ppx = px
-                px  = x
+            compute_orbit_2d_ab(step2_ab, x0, y0, A, B, seq, n_transient, n_iter, xs, params)
+            transform_values(vcalc, xs, vs)
 
-            vmin = 1e6
-            vmax = -1e6
-
+            vmin = 1e300
+            vmax = -1e300
             for n in range(n_iter):
-                force = seq[n % seq_len] & 1
-                forced_param = A if force == 0 else B
-                x, y = step2_ab(x, y, forced_param)
-                if (not np.isfinite(x)) or (not np.isfinite(y)):
-                    x = 0.5
-                    y = 0.5
+                v = vs[n]
+                if v < vmin: vmin = v
+                if v > vmax: vmax = v
 
-                if vcalc == 0:        # value
-                    v = x
-                elif vcalc == 1:      # slope
-                    v = x - px
-                elif vcalc == 2:      # convexity
-                    v = x - 2.0*px + ppx
-                elif vcalc == 3:      # curvature
-                    num = math.fabs(x - 2.0*px + ppx)
-                    den = math.pow(1.0 + (x - px)*(x - px), 1.5)
-                    if den > 0.0:
-                        v = num / den
-                    else:
-                        v = 0.0
-                else:
-                    v = x
+            for k in range(hist.size):
+                hist[k] = 0
 
-                if v < vmin:
-                    vmin = v
-                if v > vmax:
-                    vmax = v
-
-                vs[n] = v
-                ppx = px
-                px  = x
-
-            hist_fixed_bins_inplace(bins, vs, vmin, vmax)
-
-            e = 0.0
-            if hcalc == 0:      # stdev of bin counts
-                e = np.std(bins)
-            elif hcalc == 1:    # entropy
-                total = float(np.sum(bins))
-                if total > 0.0:
-                    H = 0.0
-                    for b in bins:
-                        if b > 0:
-                            p = b / total
-                            H += p * math.log(p)
-                    e = H / math.log(bins.size)
-            elif hcalc == 2:    # "zero-crossing" of bins around mean
-                m = float(np.mean(bins))
-                s = np.sign(bins - m)
-                c = s[1:] * s[:-1]
-                e = np.sum(c > 0) / bins.size
-            elif hcalc == 3:    # std of changes
-                for k in range(bins.size - 1):
-                    bins[k] = bins[k + 1] - bins[k]
-                e = np.std(bins[:-1])
-            else:
-                e = 0.0
-
+            hist_fixed_bins_inplace(hist, vs, vmin, vmax)
+            e = transform_hist(hcalc, hist, vs, vmin, vmax)
             out[j, i] = -e
 
     return out
@@ -907,100 +938,186 @@ def hist_field_2d(
     y0,
     n_transient,
     n_iter,
-    vcalc=0,
-    hcalc=0
+    vcalc,
+    hcalc,
+    hbins,
+    params,
 ):
-    """
-    Histogram-based texture field for a 2-D non-forced map.
-    Parameters are (first, second) from the domain; observable derived from x.
-    vcalc and hcalc as in _hist_field_2d_ab.
-    """
     out = np.empty((pix, pix), dtype=np.float64)
     denom = 1.0 if pix <= 1 else (pix - 1.0)
 
     for j in prange(pix):
-        vs   = np.zeros(n_iter, dtype=np.float64)
-        bins = np.empty(n_iter, dtype=np.int64)
+        xs   = np.empty(n_iter, dtype=np.float64)   # will hold y-orbit
+        vs   = np.empty(n_iter, dtype=np.float64)   # transformed values
+        hist = np.zeros(hbins, dtype=np.int64)
 
         for i in range(pix):
-            first_param, second_param = map_logical_to_physical(
-                domain, i / denom, j / denom
-            )
+            first_param, second_param = map_logical_to_physical(domain, i / denom, j / denom)
 
-            x = x0
-            y = y0
-            px = x0
-            ppx = x0
+            compute_orbit_2d(step2, x0, y0, first_param, second_param, n_transient, n_iter, xs, params)
+            transform_values(vcalc, xs, vs)
 
-            # burn-in
-            for n in range(n_transient):
-                x, y = step2(x, y, first_param, second_param)
-                if (not np.isfinite(x)) or (not np.isfinite(y)):
-                    x = 0.5
-                    y = 0.0
-                ppx = px
-                px  = x
-
-            vmin = 1e6
-            vmax = -1e6
-
+            vmin = 1e300
+            vmax = -1e300
             for n in range(n_iter):
-                x, y = step2(x, y, first_param, second_param)
-                if (not np.isfinite(x)) or (not np.isfinite(y)):
-                    x = 0.5
-                    y = 0.0
+                v = vs[n]
+                if v < vmin: vmin = v
+                if v > vmax: vmax = v
 
-                if vcalc == 0:        # value
-                    v = x
-                elif vcalc == 1:      # slope
-                    v = x - px
-                elif vcalc == 2:      # convexity
-                    v = x - 2.0*px + ppx
-                elif vcalc == 3:      # curvature
-                    num = math.fabs(x - 2.0*px + ppx)
-                    den = math.pow(1.0 + (x - px)*(x - px), 1.5)
-                    if den > 0.0:
-                        v = num / den
-                    else:
-                        v = 0.0
-                else:
-                    v = x
+            for k in range(hist.size):
+                hist[k] = 0
 
-                if v < vmin:
-                    vmin = v
-                if v > vmax:
-                    vmax = v
+            hist_fixed_bins_inplace(hist, vs, vmin, vmax)
+            e = transform_hist(hcalc, hist, vs, vmin, vmax)
+            out[j, i] = -e
 
-                vs[n] = v
-                ppx = px
-                px  = x
+    return out
 
-            hist_fixed_bins_inplace(bins, vs, vmin, vmax)
 
-            e = 0.0
-            if hcalc == 0:
-                e = np.std(bins)
-            elif hcalc == 1:
-                total = float(np.sum(bins))
-                if total > 0.0:
-                    H = 0.0
-                    for b in bins:
-                        if b > 0:
-                            p = b / total
-                            H += p * math.log(p)
-                    e = H / math.log(bins.size)
-            elif hcalc == 2:
-                m = float(np.mean(bins))
-                s = np.sign(bins - m)
-                c = s[1:] * s[:-1]
-                e = np.sum(c > 0) / bins.size
-            elif hcalc == 3:
-                for k in range(bins.size - 1):
-                    bins[k] = bins[k + 1] - bins[k]
-                e = np.std(bins[:-1])
-            else:
-                e = 0.0
+# ---------------------------------------------------------------------------
+# x0/xy0 variants: initial conditions as 2D arrays
+# ---------------------------------------------------------------------------
 
+@njit(cache=False, fastmath=False, parallel=True)
+def hist_field_1d_x0(
+    step,
+    seq,
+    domain,     # [llx, lly, ulx, uly, lrx, lry] in (A,B)
+    x0,         # (pix, pix) array of initial x values
+    n_transient,
+    n_iter,
+    vcalc,
+    hcalc,
+    hbins,
+    params,
+):
+    """
+    Histogram field for 1D map with per-pixel initial conditions.
+    pix is inferred from x0.shape[0].
+    """
+    pix = x0.shape[0]
+    out = np.empty((pix, pix), dtype=np.float64)
+    denom = 1.0 if pix <= 1 else (pix - 1.0)
+
+    for j in prange(pix):
+        xs = np.empty(n_iter, dtype=np.float64)
+        vs = np.empty(n_iter, dtype=np.float64)
+        hist = np.zeros(hbins, dtype=np.int64)
+
+        for i in range(pix):
+            A, B = map_logical_to_physical(domain, i / denom, j / denom)
+            compute_orbit(step, x0[j, i], A, B, seq, n_transient, n_iter, xs, params)
+            transform_values(vcalc, xs, vs)
+
+            vmin = 1e300
+            vmax = -1e300
+            for n in range(n_iter):
+                v = vs[n]
+                if v < vmin: vmin = v
+                if v > vmax: vmax = v
+
+            for k in range(hist.size):
+                hist[k] = 0
+
+            hist_fixed_bins_inplace(hist, vs, vmin, vmax)
+            e = transform_hist(hcalc, hist, vs, vmin, vmax)
+            out[j, i] = -e
+
+    return out
+
+
+@njit(cache=False, fastmath=False, parallel=True)
+def hist_field_2d_ab_xy0(
+    step2_ab,
+    seq,
+    domain,     # [llx, lly, ulx, uly, lrx, lry] in (A,B)
+    x0,         # (pix, pix) array of initial x values
+    y0,         # (pix, pix) array of initial y values
+    n_transient,
+    n_iter,
+    vcalc,
+    hcalc,
+    hbins,
+    params,
+):
+    """
+    Histogram field for 2D AB-forced map with per-pixel initial conditions.
+    pix is inferred from x0.shape[0].
+    """
+    pix = x0.shape[0]
+    out = np.empty((pix, pix), dtype=np.float64)
+    denom = 1.0 if pix <= 1 else (pix - 1.0)
+
+    for j in prange(pix):
+        xs = np.empty(n_iter, dtype=np.float64)
+        vs = np.empty(n_iter, dtype=np.float64)
+        hist = np.zeros(hbins, dtype=np.int64)
+
+        for i in range(pix):
+            A, B = map_logical_to_physical(domain, i / denom, j / denom)
+            compute_orbit_2d_ab(step2_ab, x0[j, i], y0[j, i], A, B, seq, n_transient, n_iter, xs, params)
+            transform_values(vcalc, xs, vs)
+
+            vmin = 1e300
+            vmax = -1e300
+            for n in range(n_iter):
+                v = vs[n]
+                if v < vmin: vmin = v
+                if v > vmax: vmax = v
+
+            for k in range(hist.size):
+                hist[k] = 0
+
+            hist_fixed_bins_inplace(hist, vs, vmin, vmax)
+            e = transform_hist(hcalc, hist, vs, vmin, vmax)
+            out[j, i] = -e
+
+    return out
+
+
+@njit(cache=False, fastmath=False, parallel=True)
+def hist_field_2d_xy0(
+    step2,
+    domain,     # [llx, lly, ulx, uly, lrx, lry] in (first,second)
+    x0,         # (pix, pix) array of initial x values
+    y0,         # (pix, pix) array of initial y values
+    n_transient,
+    n_iter,
+    vcalc,
+    hcalc,
+    hbins,
+    params,
+):
+    """
+    Histogram field for 2D non-forced map with per-pixel initial conditions.
+    pix is inferred from x0.shape[0].
+    """
+    pix = x0.shape[0]
+    out = np.empty((pix, pix), dtype=np.float64)
+    denom = 1.0 if pix <= 1 else (pix - 1.0)
+
+    for j in prange(pix):
+        xs = np.empty(n_iter, dtype=np.float64)
+        vs = np.empty(n_iter, dtype=np.float64)
+        hist = np.zeros(hbins, dtype=np.int64)
+
+        for i in range(pix):
+            first_param, second_param = map_logical_to_physical(domain, i / denom, j / denom)
+            compute_orbit_2d(step2, x0[j, i], y0[j, i], first_param, second_param, n_transient, n_iter, xs, params)
+            transform_values(vcalc, xs, vs)
+
+            vmin = 1e300
+            vmax = -1e300
+            for n in range(n_iter):
+                v = vs[n]
+                if v < vmin: vmin = v
+                if v > vmax: vmax = v
+
+            for k in range(hist.size):
+                hist[k] = 0
+
+            hist_fixed_bins_inplace(hist, vs, vmin, vmax)
+            e = transform_hist(hcalc, hist, vs, vmin, vmax)
             out[j, i] = -e
 
     return out
@@ -1020,7 +1137,8 @@ def do_lyapunov_field_1d(map_cfg,pix):
         float(map_cfg["x0"]),
         int(map_cfg["n_tr"]),
         int(map_cfg["n_it"]),
-        float(map_cfg["eps"]),            
+        float(map_cfg["eps"]),
+        map_cfg["params"],
     )
     return field
 
@@ -1031,11 +1149,12 @@ def do_lyapunov_field_2d_ab(map_cfg,pix):
         map_cfg["seq_arr"],
         map_cfg["domain_affine"],
         int(pix),
-        float(map_cfg["x0"]), 
+        float(map_cfg["x0"]),
         float(map_cfg["y0"]),
-        int(map_cfg["n_tr"]), 
+        int(map_cfg["n_tr"]),
         int(map_cfg["n_it"]),
         float(map_cfg.get("eps_floor", 1e-16)),
+        map_cfg["params"],
     )
     return field
 
@@ -1045,11 +1164,12 @@ def do_lyapunov_field_2d(map_cfg,pix):
         map_cfg["jac2"],
         map_cfg["domain_affine"],
         int(pix),
-        float(map_cfg["x0"]), 
+        float(map_cfg["x0"]),
         float(map_cfg["y0"]),
-        int(map_cfg["n_tr"]), 
+        int(map_cfg["n_tr"]),
         int(map_cfg["n_it"]),
         float(map_cfg.get("eps_floor", 1e-16)),
+        map_cfg["params"],
     )
     return field
 
@@ -1063,6 +1183,7 @@ def do_entropy_field_1d(map_cfg,pix):
         int(map_cfg["n_tr"]),
         int(map_cfg["n_it"]),
         map_cfg["omegas"],
+        map_cfg["params"],
     )
     field = map_cfg["entropy_sign"] * (2.0 * raw - 1.0)
     return field
@@ -1073,11 +1194,12 @@ def do_entropy_field_2d_ab(map_cfg,pix):
         map_cfg["seq_arr"],
         map_cfg["domain_affine"],
         int(pix),
-        float(map_cfg["x0"]), 
+        float(map_cfg["x0"]),
         float(map_cfg["y0"]),
-        int(map_cfg["n_tr"]), 
+        int(map_cfg["n_tr"]),
         int(map_cfg["n_it"]),
         map_cfg["omegas"],
+        map_cfg["params"],
     )
     field = map_cfg["entropy_sign"] * (2.0 * raw - 1.0)
     return field
@@ -1087,11 +1209,12 @@ def do_entropy_field_2d(map_cfg,pix):
         map_cfg["step2"],
         map_cfg["domain_affine"],
         int(pix),
-        float(map_cfg["x0"]), 
+        float(map_cfg["x0"]),
         float(map_cfg["y0"]),
-        int(map_cfg["n_tr"]), 
+        int(map_cfg["n_tr"]),
         int(map_cfg["n_it"]),
         map_cfg["omegas"],
+        map_cfg["params"],
     )
     field = map_cfg["entropy_sign"] * (2.0 * raw - 1.0)
     return field
@@ -1108,11 +1231,12 @@ def do_hist_field_1d(map_cfg,pix):
         int(map_cfg["vcalc"]),
         int(map_cfg["hcalc"]),
         int(map_cfg["hbins"]),
+        map_cfg["params"],
     )
     field = raw-np.median(raw)
     return field
 
-def do_hist_field_2d_ab(map_cfg,pix):
+def do_hist_field_2d_ab(map_cfg, pix):
     raw = hist_field_2d_ab(
         map_cfg["step2_ab"],
         map_cfg["seq_arr"],
@@ -1124,11 +1248,13 @@ def do_hist_field_2d_ab(map_cfg,pix):
         int(map_cfg["n_it"]),
         int(map_cfg["vcalc"]),
         int(map_cfg["hcalc"]),
+        int(map_cfg.get("hbins", 32)),
+        map_cfg["params"],
     )
-    field = raw-np.median(raw)
+    field = raw - np.median(raw)
     return field
 
-def do_hist_field_2d(map_cfg,pix):
+def do_hist_field_2d(map_cfg, pix):
     raw = hist_field_2d(
         map_cfg["step2"],
         map_cfg["domain_affine"],
@@ -1139,10 +1265,70 @@ def do_hist_field_2d(map_cfg,pix):
         int(map_cfg["n_it"]),
         int(map_cfg["vcalc"]),
         int(map_cfg["hcalc"]),
+        int(map_cfg.get("hbins", 32)),
+        map_cfg["params"],
     )
-    field = raw-np.median(raw)
+    field = raw - np.median(raw)
     return field
 
+
+# ---------------------------------------------------------------------------
+# x0/xy0 wrappers: initial conditions as 2D arrays
+# ---------------------------------------------------------------------------
+
+def do_hist_field_1d_x0(map_cfg):
+    """Wrapper for hist_field_1d_x0. x0 must be a 2D array in map_cfg."""
+    raw = hist_field_1d_x0(
+        map_cfg["step"],
+        map_cfg["seq_arr"],
+        map_cfg["domain_affine"],
+        map_cfg["x0"],  # 2D array
+        int(map_cfg["n_tr"]),
+        int(map_cfg["n_it"]),
+        int(map_cfg["vcalc"]),
+        int(map_cfg["hcalc"]),
+        int(map_cfg.get("hbins", 32)),
+        map_cfg["params"],
+    )
+    field = raw - np.median(raw)
+    return field
+
+
+def do_hist_field_2d_ab_xy0(map_cfg):
+    """Wrapper for hist_field_2d_ab_xy0. x0, y0 must be 2D arrays in map_cfg."""
+    raw = hist_field_2d_ab_xy0(
+        map_cfg["step2_ab"],
+        map_cfg["seq_arr"],
+        map_cfg["domain_affine"],
+        map_cfg["x0"],  # 2D array
+        map_cfg["y0"],  # 2D array
+        int(map_cfg["n_tr"]),
+        int(map_cfg["n_it"]),
+        int(map_cfg["vcalc"]),
+        int(map_cfg["hcalc"]),
+        int(map_cfg.get("hbins", 32)),
+        map_cfg["params"],
+    )
+    field = raw - np.median(raw)
+    return field
+
+
+def do_hist_field_2d_xy0(map_cfg):
+    """Wrapper for hist_field_2d_xy0. x0, y0 must be 2D arrays in map_cfg."""
+    raw = hist_field_2d_xy0(
+        map_cfg["step2"],
+        map_cfg["domain_affine"],
+        map_cfg["x0"],  # 2D array
+        map_cfg["y0"],  # 2D array
+        int(map_cfg["n_tr"]),
+        int(map_cfg["n_it"]),
+        int(map_cfg["vcalc"]),
+        int(map_cfg["hcalc"]),
+        int(map_cfg.get("hbins", 32)),
+        map_cfg["params"],
+    )
+    field = raw - np.median(raw)
+    return field
 
 
 

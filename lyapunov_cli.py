@@ -72,6 +72,140 @@ def _get_int(d: dict, key: str, default: int) -> int:
         return int(default)
 
 
+def _parse_range(args: list) -> tuple[float, float]:
+    """
+    Parse range from args list.
+
+    - [] -> (0.0, 1.0)  # default
+    - [hi] -> (0.0, hi)  # one number means 0 to that
+    - [a, b] -> (min(a,b), max(a,b))  # two numbers define lo and hi
+    """
+    if len(args) == 0:
+        return 0.0, 1.0
+    elif len(args) == 1:
+        return 0.0, float(args[0])
+    else:
+        a, b = float(args[0]), float(args[1])
+        return min(a, b), max(a, b)
+
+
+def _make_initial_field(spec_list: list | str, pix: int) -> np.ndarray:
+    """
+    Generate a (pix, pix) array of initial conditions based on spec.
+
+    spec_list can be a string (legacy) or list of strings.
+
+    Range parsing (applies to noise, grad, image):
+      - no args -> [0, 1]
+      - one arg (hi) -> [0, hi]
+      - two args (a, b) -> [min(a,b), max(a,b)]
+
+    Supported specs:
+      - "noise" or "noise:hi" or "noise:lo:hi": uniform random
+      - "0.5" (any float): constant value
+      - "grad:x" or "grad:x:hi" or "grad:x:lo:hi": horizontal gradient
+      - "grad:y" or "grad:y:hi" or "grad:y:lo:hi": vertical gradient
+      - "image:filepath" or "image:filepath:hi" or "image:filepath:lo:hi": load grayscale
+    """
+    # Normalize to list
+    if isinstance(spec_list, str):
+        spec_list = [spec_list]
+
+    if not spec_list:
+        raise ValueError("Empty initial field spec")
+
+    cmd = str(spec_list[0]).strip().lower()
+    args = [str(s).strip() for s in spec_list[1:]]
+
+    # noise or noise:hi or noise:lo:hi
+    if cmd in ("noise", "random"):
+        lo, hi = _parse_range(args)
+        return (np.random.rand(pix, pix) * (hi - lo) + lo).astype(np.float64)
+
+    # grad:x or grad:x:hi or grad:x:lo:hi  /  grad:y or grad:y:hi or grad:y:lo:hi
+    if cmd == "grad":
+        if not args:
+            raise ValueError("grad requires axis: grad:x or grad:y")
+        axis = args[0].lower()
+        lo, hi = _parse_range(args[1:])
+        g = np.linspace(lo, hi, pix, dtype=np.float64)
+        if axis == "x":
+            return np.broadcast_to(g, (pix, pix)).copy()
+        elif axis == "y":
+            return np.broadcast_to(g[:, np.newaxis], (pix, pix)).copy()
+        else:
+            raise ValueError(f"grad axis must be 'x' or 'y', got '{axis}'")
+
+    # image:filepath or image:filepath:hi or image:filepath:lo:hi
+    if cmd == "image":
+        if not args:
+            raise ValueError("image requires filepath: image:path/to/file.jpg")
+        filepath = args[0]
+        lo, hi = _parse_range(args[1:])
+        return _load_image_as_field(filepath, pix, lo, hi)
+
+    # Legacy single-word shortcuts
+    if cmd == "gradx":
+        g = np.linspace(0.0, 1.0, pix, dtype=np.float64)
+        return np.broadcast_to(g, (pix, pix)).copy()
+
+    if cmd == "grady":
+        g = np.linspace(0.0, 1.0, pix, dtype=np.float64)
+        return np.broadcast_to(g[:, np.newaxis], (pix, pix)).copy()
+
+    # Try to parse as a constant float
+    try:
+        val = float(_eval_number(cmd).real)
+        return np.full((pix, pix), val, dtype=np.float64)
+    except Exception:
+        pass
+
+    raise ValueError(f"Unknown initial field spec: {spec_list}")
+
+
+def _load_image_as_field(filepath: str, pix: int, lo: float = 0.0, hi: float = 1.0) -> np.ndarray:
+    """
+    Load an image file, convert to grayscale, resize to pix x pix,
+    and return as float64 array scaled to [lo, hi].
+
+    Applies rot90 to align image coordinates with the project's convention
+    (image y=0 at top -> mathematical y=0 at bottom).
+    """
+    try:
+        import pyvips
+    except ImportError:
+        raise ImportError("pyvips required for image loading. Install with: pip install pyvips")
+
+    img = pyvips.Image.new_from_file(filepath, access="sequential")
+
+    # Convert to grayscale if needed
+    if img.bands > 1:
+        img = img.colourspace("b-w")
+
+    # Rotate 90° CW to align with project coordinate convention
+    img = img.rot270()
+
+    # Resize to pix x pix
+    scale = pix / max(img.width, img.height)
+    img = img.resize(scale)
+
+    # Crop/pad to exact pix x pix (center crop if needed)
+    if img.width != pix or img.height != pix:
+        # Embed in center of pix x pix canvas
+        left = (pix - img.width) // 2
+        top = (pix - img.height) // 2
+        img = img.embed(left, top, pix, pix, extend="copy")
+
+    # Convert to numpy and scale to [lo, hi]
+    arr = np.ndarray(
+        buffer=img.write_to_memory(),
+        dtype=np.uint8,
+        shape=[img.height, img.width]
+    )
+    normalized = arr.astype(np.float64) / 255.0  # [0, 1]
+    return normalized * (hi - lo) + lo  # [lo, hi]
+
+
 
 # ---------------------------------------------------------------------------
 # spec -> map 
@@ -89,7 +223,7 @@ def get_map_name(spec: str)-> str:
         raise SystemExit(f"{map_name} not in MAP_TEMPLATES")
     return map_name
 
-def make_cfg(spec:str):
+def make_cfg(spec:str, pix:int=1000):
 
     map_name = get_map_name(spec)
 
@@ -116,7 +250,7 @@ def make_cfg(spec:str):
     map_cfg["type"] = map_type
     domain = map_cfg["domain"]
     
-    use_seq = (map_type=="step1d") or (map_type=="step2d_ab")
+    use_seq = (map_type=="step1d") or (map_type=="step2d_ab") or (map_type=="step1d_ab_x0") or (map_type=="step2d_ab_xy0")
     seq_arr = maps.seq_to_array(maps.DEFAULT_SEQ) if use_seq else None
 
     if len(map_spec)>1:
@@ -145,8 +279,9 @@ def make_cfg(spec:str):
 
     map_cfg["domain_affine"] = affine.build_affine_domain(specdict, a0, b0, a1, b1)
 
-    map_cfg["x0"]    = _get_float(specdict, "x0", map_cfg.get("x0", 0.5))
-    map_cfg["y0"]    = _get_float(specdict, "y0", map_cfg.get("y0", 0.5))
+    # Default params: empty array (can be set programmatically for precomputed values)
+    map_cfg["params"] = np.empty(0, dtype=np.float64)
+
     map_cfg["n_tr"]  = _get_int(specdict, "trans", map_cfg.get("trans", maps.DEFAULT_TRANS))
     map_cfg["n_it"]  = _get_int(specdict, "iter", map_cfg.get("iter",  maps.DEFAULT_ITER))
     map_cfg["eps"]   = _get_float(specdict, "eps",   maps.DEFAULT_EPS_LYAP)
@@ -175,6 +310,26 @@ def make_cfg(spec:str):
         if len(specdict["hist"])>2:
             map_cfg["hbins"] = int(specdict["hist"][2])
 
+    # Handle x0/y0: arrays for x0/xy0 map types, scalars otherwise
+    if "_x0" in map_cfg["type"] or "_xy0" in map_cfg["type"]:
+        # For x0/xy0 types, spec can be a list like ["noise", "0", "1"] or ["image", "path.jpg"]
+        # map_cfg defaults are strings like "noise" or lists like ["grad", "x"]
+        x0_spec = specdict.get("x0") or map_cfg.get("x0", ["noise"])
+        y0_spec = specdict.get("y0") or map_cfg.get("y0", ["noise"])
+
+        # Normalize string defaults to list
+        if isinstance(x0_spec, str):
+            x0_spec = [x0_spec]
+        if isinstance(y0_spec, str):
+            y0_spec = [y0_spec]
+
+        map_cfg["x0"] = _make_initial_field(x0_spec, pix)
+        if "_xy0" in map_cfg["type"]:
+            map_cfg["y0"] = _make_initial_field(y0_spec, pix)
+    else:
+        map_cfg["x0"] = _get_float(specdict, "x0", map_cfg.get("x0", 0.5))
+        map_cfg["y0"] = _get_float(specdict, "y0", map_cfg.get("y0", 0.5))
+
     return map_cfg
 
 # ---------------------------------------------------------------------------
@@ -184,7 +339,7 @@ def make_cfg(spec:str):
 
 def spec2lyapunov(spec: str, pix: int = 5000) -> np.ndarray:
 
-    map_cfg = make_cfg(spec)
+    map_cfg = make_cfg(spec, pix)
  
     if map_cfg["type"] == "step1d":
         print("lyapunov_field_generic_1d")
@@ -221,6 +376,24 @@ def spec2lyapunov(spec: str, pix: int = 5000) -> np.ndarray:
     elif map_cfg["type"] == "step2d_hist":
         print("hist_field_2d")
         field=fields.do_hist_field_2d(map_cfg,pix)
+
+    elif map_cfg["type"] == "step1d_x0_hist":
+        print("hist_field_1d_x0")
+        field = fields.do_hist_field_1d_x0(map_cfg)
+
+    elif map_cfg["type"] == "step2d_ab_xy0_hist":
+        print("hist_field_2d_ab_xy0")
+        field = fields.do_hist_field_2d_ab_xy0(map_cfg)
+
+    elif map_cfg["type"] == "step2d_xy0_hist":
+        print("hist_field_2d_xy0")
+        field = fields.do_hist_field_2d_xy0(map_cfg)
+
+    elif map_cfg["type"] in ("step1d_x0", "step2d_ab_xy0", "step2d_xy0"):
+        raise SystemExit(
+            f"type={map_cfg['type']} only supported with hist mode. "
+            f"Add 'hist:...' to your spec."
+        )
 
     else:
         raise SystemExit(f"Unsupported type={map_cfg['type']} for map '{map_cfg['map_name']}'")
