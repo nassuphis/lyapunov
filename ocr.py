@@ -9,7 +9,7 @@ import os
 import base64
 from google import genai
 from google.genai import types
-import functions
+from maps import functions
 import inspect
 
 
