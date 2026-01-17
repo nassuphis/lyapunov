@@ -115,18 +115,78 @@ For 1D maps, the forcing pattern (e.g., `AB`, `AABB`, `ABAB`) determines how par
 
 ## Macro System
 
-Macros in `macros6.txt` define reusable templates:
+Macros define reusable spec fragments in a macro file (e.g., `macros.txt`):
 
 ```
+@MYSPEC=@LOGISTIC,@COLORS,iter:1000
 @LOGISTIC=map:logistic:AB:2:4:2:4
 @COLORS=rgb:mh:1.0:FF0000:000000:00FF00
-@MYSPEC=@LOGISTIC,@COLORS,iter:1000
 ```
 
-Template expansion with Python expressions:
+### Single-Pass Rolling Substitution
+
+The macro processor uses **single-pass substitution** that iterates through macros in file order, replacing each macro key with its value in the **current result string**. This creates a "rolling" effect where earlier macro substitutions can introduce new macro references that get expanded by later iterations.
+
+**Example macro file:**
 ```
-@BATCH=map:logistic:AB:#{2+slot*0.1}:4:2:4
+@RUN=@CONFIG
+@CONFIG=map:@MAP,color:@RGB
+@MAP=logistic
+@RGB=mh
 ```
+
+**Expansion of `@RUN`:**
+```
+Start:     @RUN
+→ @RUN:    @CONFIG                     (replaced @RUN)
+→ @CONFIG: map:@MAP,color:@RGB         (replaced @CONFIG in result)
+→ @MAP:    map:logistic,color:@RGB     (replaced @MAP in result)
+→ @RGB:    map:logistic,color:mh       (replaced @RGB in result)
+```
+
+**Key insight:** Macros defined **earlier** in the file are processed **first**. When `@RUN` is replaced with `@CONFIG`, the result now contains `@CONFIG`. Since `@CONFIG` comes later in the iteration, it will be replaced in the same pass.
+
+**Important ordering rule:** If macro `@A` references `@B`, then `@A` must be defined **before** `@B`:
+```
+# CORRECT - @SPEC defined before its dependencies
+@SPEC=map:@MAP,rgb:@RGB
+@MAP=logistic
+@RGB=mh
+
+# WRONG - @MAP and @RGB already processed when @SPEC is reached
+@MAP=logistic
+@RGB=mh
+@SPEC=map:@MAP,rgb:@RGB   # Won't expand! @MAP/@RGB already passed
+```
+
+**Real-world pattern (from macros6.txt):**
+```
+@RUN0=@LYAP0                              # Entry point first
+@LYAP0=slot:{1:@SLOTS0},@MAP14,@RGB0      # References later macros
+@SLOTS0=10                                 # Leaf values defined last
+@MAP14=map:nn14:AB:-40:-40:40:40
+@RGB0=rgb:pfm:@PAL0:1.2
+@PAL0=#{r2line("tri_warm.txt")}
+```
+
+Entry points are first, dependencies are defined afterward (deepest dependencies last).
+
+### Expansion Syntax
+
+Within macro values, you can use:
+
+- `#{expr}` - Python expression evaluated at render time (e.g., `#{row}`, `#{2+slot*0.1}`)
+- `${expr}` - Python expression for list expansion (e.g., `${[1,2,3]}` expands to three specs)
+- `{a:b}` - Numeric range (e.g., `{2:4}` expands to `2,3,4`)
+- `{a:b|N}` - Linspace (e.g., `{0:1|5}` expands to `0,0.25,0.5,0.75,1`)
+- `[a,b,c]` - Choice list (cartesian product with other dimensions)
+
+### Random Functions
+
+Macros support randomization via `#{...}`:
+- `#{choose("a","b","c")}` - Random choice from list
+- `#{rfloat3(0.1,2.0)}` - Random float with 3 decimal places
+- `#{rline("file.txt")}` - Random line from file
 
 ## Supported Maps
 
